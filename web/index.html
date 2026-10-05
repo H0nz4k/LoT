@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>IoT moduly · HanzHub</title>
-  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="iot-icon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="iot.css">
-  <script src="iot.js" defer></script>
+  <link rel="stylesheet" href="iot.css?v=1.0.1">
+  <script src="iot.js?v=1.0.1" defer></script>
 </head>
 <body>
   <svg class="svg-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -26,20 +26,12 @@
   <main class="wrap">
     <header class="top-bar">
       <a class="brand" href="index.html" data-dashboard><img src="hanzlogo.svg" alt="HanzHub"></a>
-      <span class="top-title">Chytrá domácnost</span>
+      <div class="header-title"><img src="iot-icon.svg" class="heading-icon" alt=""><h1>IoT moduly</h1></div>
       <span class="version" id="versionEl">—</span>
       <nav class="hub-nav" aria-label="HanzHub">
         <a href="index.html" data-dashboard>Služby</a><a href="iot.html" aria-current="page">IoT</a>
       </nav>
     </header>
-
-    <section class="page-heading">
-      <div><div class="eyebrow">HANZHUB · INTERNET VĚCÍ</div><h1>IoT moduly</h1><p>Všechna chytrá zařízení na jednom místě.</p></div>
-      <div class="heading-actions">
-        <button class="btn" id="refreshBtn"><svg><use href="#icon-refresh"/></svg>Obnovit</button>
-        <button class="btn btn-primary" id="addBtn"><span class="plus">+</span>Přidat modul</button>
-      </div>
-    </section>
 
     <div class="toolbar">
       <div class="view-tabs" role="tablist" aria-label="Zobrazení IoT">
@@ -47,6 +39,10 @@
         <button id="manageTab" role="tab" aria-selected="false" aria-controls="manageView">Správa modulů</button>
       </div>
       <div class="summary" id="summary" aria-live="polite">Načítám moduly…</div>
+      <div class="heading-actions">
+        <button class="btn" id="refreshBtn"><svg><use href="#icon-refresh"/></svg>Obnovit</button>
+        <button class="btn btn-primary" id="addBtn"><span class="plus">+</span>Přidat modul</button>
+      </div>
     </div>
 
     <div id="pageError" class="notice error" role="alert" hidden></div>

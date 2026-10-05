@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Idempotentní napojení samostatné IoT služby na stávající HanzHub dashboard."""
 import argparse
+import base64
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -69,13 +70,25 @@ def install_navigation(directory):
 
 
 def register_card(api, iot_url, port):
+    icon = "data:image/svg+xml;base64," + base64.b64encode((ASSETS / 'iot.svg').read_bytes()).decode('ascii')
+    def refresh_icon(services):
+        existing = next((item for item in services if item.get('key') == 'iot'), None)
+        if existing is None:
+            return False
+        if existing.get('icon') != icon:
+            request = Request(api.rstrip('/') + '/api/services/iot', method='PUT',
+                data=json.dumps({'icon':icon}).encode('utf-8'), headers={'Content-Type':'application/json'})
+            with urlopen(request, timeout=5) as response:
+                if not json.load(response).get('ok'):
+                    raise ValueError('Dashboard nepotvrdil obnovu ikony.')
+        return True
     with urlopen(api.rstrip('/') + '/api/services', timeout=5) as response:
         services = json.load(response).get('services', [])
-    if any(item.get('key') == 'iot' for item in services):
+    if refresh_icon(services):
         return False
     card = {'key':'iot', 'name':'IoT moduly', 'desc':'Ovládání a správa chytrých zařízení',
             'url':iot_url, 'ping':f'http://127.0.0.1:{port}/api/iot/health',
-            'icon':'icons/iot.svg', 'color':'linear-gradient(180deg,#fb923c,#f59e0b)', 'public':False}
+            'icon':icon, 'color':'linear-gradient(180deg,#fb923c,#f59e0b)', 'public':False}
     request = Request(api.rstrip('/') + '/api/services', method='POST',
         data=json.dumps(card).encode('utf-8'), headers={'Content-Type':'application/json'})
     try:
@@ -86,7 +99,7 @@ def register_card(api, iot_url, port):
         # Kartu mohl mezitím zaregistrovat právě spuštěný IoT kontejner.
         if error.code == 400:
             with urlopen(api.rstrip('/') + '/api/services', timeout=5) as response:
-                if any(item.get('key') == 'iot' for item in json.load(response).get('services', [])):
+                if refresh_icon(json.load(response).get('services', [])):
                     return False
         raise
     return True
@@ -106,7 +119,7 @@ def main():
         if backup:
             print(f'Záloha původní stránky: {backup}')
         added = register_card(args.api, args.iot_url, args.port)
-        print('Karta IoT přidána.' if added else 'Karta IoT již existuje; její nastavení zachováno.')
+        print('Karta IoT přidána.' if added else 'Karta IoT již existuje; ikona aktualizována, ostatní nastavení zachováno.')
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f'Integrace dashboardu: {error}', file=sys.stderr)
         return 1

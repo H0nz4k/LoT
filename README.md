@@ -4,6 +4,8 @@ Samostatná služba pro lokální ovládání a správu chytrých modulů v Hanz
 
 Web zachovává styl stávajícího HanzHubu: tmavé pozadí s barevnými přechody, průsvitné karty, logo HanzHub a zelené akce. Ovládání infrapanelu má velkou cílovou teplotu s kruhovým ukazatelem, aktuální teplotu, tlačítka ±, posuvník, zapnutí, dětský zámek a časovač. Funguje na počítači i telefonu.
 
+**Verze 1.0.1:** vlastní oranžová ikona čipu s Wi-Fi pro kartu, hlavičku i favicon. Hlavička má na desktopu dva řádky; v nižším okně se zmenší mezery a ukazatel, aby bylo vidět i spodní ovládání panelu.
+
 Součástí je správa modulů: přidání ze souboru TinyTuya nebo ručně, pojmenování, místnost, úprava IP a protokolu, obnova klíče, pozastavení a odebrání. Podporován je infrapanel **BOT SMART IPH2** a obecný **spínač / zásuvka Tuya** s nastavitelným boolean DP zapnutí. Další typy lze doplnit ovladačem v `iot/iot_driver.py`; automatický univerzální ovladač pro všechny Tuya výrobky není součástí této verze.
 
 ## Zapojení
@@ -38,7 +40,7 @@ Instalace:
 1. Vytvoří `.env`, pokud chybí; existující konfiguraci zachová.
 2. Ověří lokální `devices.json`, sestaví a spustí **jen** samostatný Compose projekt IoT.
 3. Při prvním startu rozpozná tvůj panel podle MAC `fc:3c:d7:4c:a2:dc` a naimportuje jeho ID a klíč.
-4. Přidá kartu **IoT moduly** do stávajícího dashboardu, pokud ještě neexistuje. Přidá také záložky **Služby / IoT**, ikonu a přesměrovací stránku. Původní `index.html` zálohuje mimo statický web. Existující karty a jejich ruční nastavení zachová.
+4. Přidá kartu **IoT moduly** do stávajícího dashboardu, pokud ještě neexistuje. Přidá také záložky **Služby / IoT**, ikonu a přesměrovací stránku. Původní `index.html` zálohuje mimo statický web. U IoT karty obnoví spravovanou ikonu; názvy, odkazy a ostatní nastavení zachová. Ikona je uložená přímo v konfiguraci karty, takže funguje i bez kopie SVG v adresáři dashboardu.
 5. S `--with-lcd` najde skutečný `lcd_info.py` ve službě `lcd-info.service`, zálohuje jej, doplní helper a restartuje tuto službu. Systémovou jednotku nenahrazuje.
 
 Pak otevři **[http://192.168.1.3:4011](http://192.168.1.3:4011)** nebo novou kartu v HanzHubu. Kartu nemusíš přidávat ručně. Po instalaci dashboard jednou obnov v prohlížeči.
@@ -84,7 +86,7 @@ cd /opt/hanzhub-iot
 sudo sh update.sh --with-lcd
 ```
 
-Aktualizace používá `git pull --ff-only` a znovu instalaci. Databáze a `.env` se zachovají. Pokud sis existující IoT kartu upravil ručně, instalátor ji nepřepíše; změněnou URL pak nastav v nastavení dashboardu. Aktualizace starého repozitáře Dashboard může přepsat doplněnou navigaci: znovu spusť `integrations/dashboard.py`. Karta uložená přes API zůstává v původním `services.json`.
+Aktualizace používá `git pull --ff-only` a znovu instalaci. Databáze a `.env` se zachovají. U existující IoT karty instalátor obnoví ikonu a zachová ostatní ruční úpravy; změněnou URL pak nastav v nastavení dashboardu. Aktualizace starého repozitáře Dashboard může přepsat doplněnou navigaci: znovu spusť `integrations/dashboard.py`. Karta uložená přes API zůstává v původním `services.json`.
 
 Služby jsou oddělené: tlačítka Dockeru ve starém dashboardu ovládají jeho vlastní Compose projekt. IoT aktualizuj nebo restartuj z `/opt/hanzhub-iot`:
 
@@ -192,6 +194,6 @@ docker compose config --quiet
 
 Testy pokrývají mapování DP, rozsahy a typy, potvrzování zápisu, timer, poruchy, výpadek, registr a obnovu klíče po párování, serializaci příkazů, HTTP API, skrytí klíčů, LCD i opakované napojení dashboardu. Používají výslovně testovací transport a žádné skutečné zařízení nezapínají. GitHub Actions tyto kontroly spouští při pushi i PR.
 
-V první verzi prošlo 30 automatických testů a kontrola syntaxe Python/JavaScript/shell. V prostředí přípravy nebyl Docker ani přístup k framebufferu Raspberry; sestavení ARM kontejneru, skutečné LCD a ostatní ovládací funkce je nutné ověřit na HUBu. Cloudový prohlížeč zde nepovolil přístup k lokálnímu portu pro vizuální ověření webu.
+Ve verzi 1.0.1 prošlo 32 automatických testů a kontrola syntaxe Python/JavaScript/shell. V prostředí přípravy nebyl Docker ani přístup k framebufferu Raspberry; sestavení ARM kontejneru, skutečné LCD a ostatní ovládací funkce je nutné ověřit na HUBu. Cloudový prohlížeč zde nepovolil přístup k lokálnímu portu pro vizuální ověření webu.
 
 Zdroje: [TinyTuya](https://github.com/jasonacox/tinytuya), [potvrzený Tuya thing model endpoint](https://developer.tuya.com/en/docs/cloud/bd68171262?id=Kcp4utbhzzfgo), [původní HanzHub Dashboard](https://github.com/H0nz4k/Dashboard).

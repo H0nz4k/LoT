@@ -1,4 +1,5 @@
 import importlib.util
+import base64
 import io
 import json
 from pathlib import Path
@@ -12,7 +13,9 @@ from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'lcd'))
+sys.path.insert(0, str(ROOT / 'iot'))
 import infrapanel_widget as widget
+import server as iot_server
 
 
 def load_file(name, path):
@@ -84,11 +87,34 @@ class LCDTests(unittest.TestCase):
 
 class DashboardTests(unittest.TestCase):
     def test_card_created_concurrently_by_container_is_preserved(self):
+        icon = 'data:image/svg+xml;base64,' + base64.b64encode((dashboard.ASSETS / 'iot.svg').read_bytes()).decode('ascii')
         responses = [io.BytesIO(json.dumps({'services':[]}).encode()),
                      HTTPError('http://localhost/api/services', 400, 'exists', {}, None),
-                     io.BytesIO(json.dumps({'services':[{'key':'iot','url':'http://custom:4011'}]}).encode())]
+                     io.BytesIO(json.dumps({'services':[{'key':'iot','url':'http://custom:4011','icon':icon}]}).encode())]
         with patch.object(dashboard, 'urlopen', side_effect=responses):
             self.assertFalse(dashboard.register_card('http://localhost:4010', 'http://192.168.1.3:4011', 4011))
+
+    def test_missing_card_icon_is_repaired_without_overwriting_custom_settings(self):
+        responses = [io.BytesIO(json.dumps({'services':[{'key':'iot','name':'Moje IoT',
+            'url':'http://custom:4011', 'icon':'icons/missing.svg'}]}).encode()),
+            io.BytesIO(b'{"ok":true}')]
+        with patch.object(dashboard, 'urlopen', side_effect=responses) as calls:
+            self.assertFalse(dashboard.register_card('http://localhost:4010', 'http://192.168.1.3:4011', 4011))
+        request = calls.call_args_list[1].args[0]
+        self.assertEqual(request.get_method(), 'PUT')
+        changes = json.loads(request.data)
+        self.assertEqual(set(changes), {'icon'})
+        data = base64.b64decode(changes['icon'].split(',', 1)[1])
+        self.assertEqual(data, (dashboard.ASSETS / 'iot.svg').read_bytes())
+
+    def test_container_also_repairs_icon_when_dashboard_files_are_not_installed(self):
+        responses = [io.BytesIO(b'{"services":[{"key":"iot","icon":"icons/iot.svg"}]}'),
+                     io.BytesIO(b'{"ok":true}')]
+        with patch.object(iot_server.urllib.request, 'urlopen', side_effect=responses) as calls:
+            iot_server.register_dashboard()
+        request = calls.call_args_list[1].args[0]
+        self.assertEqual(request.get_method(), 'PUT')
+        self.assertEqual(set(json.loads(request.data)), {'icon'})
 
     def test_idempotent_nav_preserves_existing_settings_and_data(self):
         with tempfile.TemporaryDirectory() as tmp:

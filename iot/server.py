@@ -2,6 +2,7 @@
 """Samostatná IoT služba HanzHub: web, API a lokální TinyTuya ovladače."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
+import base64
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ ASSETS = {"/": ("index.html", "text/html; charset=utf-8"),
           "/iot.js": ("iot.js", "text/javascript; charset=utf-8"),
           "/hanzlogo.svg": ("hanzlogo.svg", "image/svg+xml"),
           "/favicon.svg": ("favicon.svg", "image/svg+xml"),
+          "/iot-icon.svg": ("iot-icon.svg", "image/svg+xml"),
           "/version.json": ("version.json", "application/json")}
 
 
@@ -180,18 +182,25 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def register_dashboard():
-    """Přidá kartu pouze pokud chybí; zachová ruční úpravy i ostatní služby."""
+    """Přidá kartu nebo obnoví její ikonu; ostatní ruční nastavení zachová."""
     base = os.environ.get("HANZHUB_DASHBOARD_API", "http://127.0.0.1:4010").rstrip("/")
     port = int(os.environ.get("HANZHUB_IOT_PORT", "4011"))
+    icon = "data:image/svg+xml;base64," + base64.b64encode((WEB_DIR / "iot-icon.svg").read_bytes()).decode("ascii")
     service = {"key": "iot", "name": "IoT moduly", "desc": "Ovládání a správa chytrých zařízení",
                "url": os.environ.get("HANZHUB_IOT_URL", f"http://192.168.1.3:{port}"),
                "ping": f"http://127.0.0.1:{port}/api/iot/health",
-               "icon": "icons/iot.svg", "color": "linear-gradient(180deg,#fb923c,#f59e0b)", "public": False}
+               "icon": icon, "color": "linear-gradient(180deg,#fb923c,#f59e0b)", "public": False}
     for _ in range(12):
         try:
             with urllib.request.urlopen(base + "/api/services", timeout=3) as response:
                 services = json.load(response).get("services", [])
-            if any(item.get("key") == "iot" for item in services):
+            existing = next((item for item in services if item.get("key") == "iot"), None)
+            if existing:
+                if existing.get("icon") != icon:
+                    request = urllib.request.Request(base + "/api/services/iot", method="PUT",
+                        data=json.dumps({"icon": icon}).encode("utf-8"), headers={"Content-Type": "application/json"})
+                    with urllib.request.urlopen(request, timeout=3):
+                        print("Ikona IoT karty obnovena.", flush=True)
                 return
             request = urllib.request.Request(base + "/api/services", method="POST",
                 data=json.dumps(service).encode("utf-8"), headers={"Content-Type": "application/json"})
