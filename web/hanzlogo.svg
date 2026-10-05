@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="280" viewBox="0 0 920 280" role="img" aria-label="HanzHub logo">
+  <defs>
+    <linearGradient id="hhGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00C389"/>
+      <stop offset="55%" stop-color="#21D07A"/>
+      <stop offset="100%" stop-color="#8BFF57"/>
+    </linearGradient>
+
+    <linearGradient id="ringGrad" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#00BFA5"/>
+      <stop offset="100%" stop-color="#7CFF5B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ICON -->
+  <g transform="translate(70,40)">
+    <g fill="none" stroke="url(#ringGrad)" stroke-width="10" stroke-linecap="round">
+      <path d="M120 22 A98 98 0 0 1 218 120"/>
+      <path d="M218 120 A98 98 0 0 1 120 218"/>
+      <path d="M120 218 A98 98 0 0 1 22 120"/>
+      <path d="M22 120 A98 98 0 0 1 120 22"/>
+    </g>
+
+    <circle cx="120" cy="120" r="54" fill="none" stroke="url(#ringGrad)" stroke-width="10"/>
+
+    <g stroke="url(#hhGrad)" stroke-width="10" stroke-linecap="round">
+      <line x1="120" y1="66" x2="120" y2="174"/>
+      <line x1="66" y1="120" x2="174" y2="120"/>
+      <line x1="82" y1="82" x2="158" y2="158" opacity="0.65"/>
+      <line x1="158" y1="82" x2="82" y2="158" opacity="0.65"/>
+    </g>
+
+    <g fill="url(#hhGrad)">
+      <circle cx="120" cy="120" r="16"/>
+      <circle cx="120" cy="22"  r="14"/>
+      <circle cx="218" cy="120" r="14"/>
+      <circle cx="120" cy="218" r="14"/>
+      <circle cx="22"  cy="120" r="14"/>
+    </g>
+  </g>
+
+  <!-- TEXT -->
+  <text x="330" y="170"
+        font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif"
+        font-size="100"
+        font-weight="700"
+        fill="url(#hhGrad)">
+    HanzHub
+  </text>
+</svg>

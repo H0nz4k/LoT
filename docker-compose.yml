@@ -1,0 +1,32 @@
+name: hanzhub-iot
+services:
+  hanzhub_iot:
+    build:
+      context: .
+      dockerfile: iot/Dockerfile
+    container_name: hanzhub_iot
+    network_mode: host
+    environment:
+      HANZHUB_IOT_PORT: ${HANZHUB_IOT_PORT:-4011}
+      HANZHUB_IOT_URL: ${HANZHUB_IOT_URL:-http://192.168.1.3:4011}
+      HANZHUB_DASHBOARD_API: ${HANZHUB_DASHBOARD_API:-http://127.0.0.1:4010}
+      HANZHUB_DASHBOARD_URL: ${HANZHUB_DASHBOARD_URL:-http://192.168.1.3:4001}
+      HANZHUB_IOT_DEVICES_FILE: /run/hanzhub-iot/devices.json
+      HANZHUB_IOT_DATA_DIR: /var/lib/hanzhub-iot
+    volumes:
+      - iot_data:/var/lib/hanzhub-iot
+      - type: bind
+        source: ${TINYTUYA_DEVICES_FILE:-/opt/infrapanel/devices.json}
+        target: /run/hanzhub-iot/devices.json
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ['HANZHUB_IOT_PORT']+'/api/iot/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+volumes:
+  iot_data:

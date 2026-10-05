@@ -1,0 +1,16 @@
+.git
+.env
+.venv
+__pycache__
+**/__pycache__
+**/*.pyc
+tests
+lcd
+integrations
+docs
+*.log
+**/devices.json
+**/tinytuya.json
+**/tuya-raw.json
+**/snapshot.json
+data

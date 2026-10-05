@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>IoT moduly · HanzHub</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="iot.css">
+  <script src="iot.js" defer></script>
+</head>
+<body>
+  <svg class="svg-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="icon-heat" viewBox="0 0 24 24"><path d="M7 4c-4 5 4 6 0 11M12 3c-4 5 4 7 0 12M17 4c-4 5 4 6 0 11M4 20h16"/></symbol>
+    <symbol id="icon-power" viewBox="0 0 24 24"><path d="M12 2v10M6.3 5.5a9 9 0 1 0 11.4 0"/></symbol>
+    <symbol id="icon-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="icon-temp" viewBox="0 0 24 24"><path d="M9 14.5V5a3 3 0 0 1 6 0v9.5a5 5 0 1 1-6 0Z"/><path d="M12 7v10"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8"/></symbol>
+    <symbol id="icon-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l4-1L20 7a2 2 0 0 0-3-3L5 16l-1 4Z"/></symbol>
+    <symbol id="icon-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M8 14a6 6 0 1 1 8 0c-1 1-1 2-1 4H9c0-2 0-3-1-4Z"/></symbol>
+    <symbol id="icon-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
+  </svg>
+  <main class="wrap">
+    <header class="top-bar">
+      <a class="brand" href="index.html" data-dashboard><img src="hanzlogo.svg" alt="HanzHub"></a>
+      <span class="top-title">Chytrá domácnost</span>
+      <span class="version" id="versionEl">—</span>
+      <nav class="hub-nav" aria-label="HanzHub">
+        <a href="index.html" data-dashboard>Služby</a><a href="iot.html" aria-current="page">IoT</a>
+      </nav>
+    </header>
+
+    <section class="page-heading">
+      <div><div class="eyebrow">HANZHUB · INTERNET VĚCÍ</div><h1>IoT moduly</h1><p>Všechna chytrá zařízení na jednom místě.</p></div>
+      <div class="heading-actions">
+        <button class="btn" id="refreshBtn"><svg><use href="#icon-refresh"/></svg>Obnovit</button>
+        <button class="btn btn-primary" id="addBtn"><span class="plus">+</span>Přidat modul</button>
+      </div>
+    </section>
+
+    <div class="toolbar">
+      <div class="view-tabs" role="tablist" aria-label="Zobrazení IoT">
+        <button id="controlTab" role="tab" aria-selected="true" aria-controls="controlView">Ovládání</button>
+        <button id="manageTab" role="tab" aria-selected="false" aria-controls="manageView">Správa modulů</button>
+      </div>
+      <div class="summary" id="summary" aria-live="polite">Načítám moduly…</div>
+    </div>
+
+    <div id="pageError" class="notice error" role="alert" hidden></div>
+    <section id="controlView" class="control-layout" role="tabpanel" aria-labelledby="controlTab">
+      <aside class="module-sidebar">
+        <div class="sidebar-heading"><h2>Moje zařízení</h2><span id="moduleCount" class="count">0</span></div>
+        <label class="search"><span class="sr-only">Hledat zařízení nebo místnost</span><input id="searchInput" type="search" placeholder="Hledat zařízení nebo místnost…"></label>
+        <div id="moduleList" class="module-list"><div class="empty small">Načítám zařízení…</div></div>
+        <div class="sidebar-footer"><span class="connection-dot"></span>Lokální ovládání přes HanzHub</div>
+      </aside>
+      <div class="control-column">
+        <section id="controller" class="controller" aria-label="Ovládání vybraného zařízení"><div class="empty">Vyber zařízení k ovládání.</div></section>
+        <section class="activity panel"><div class="section-heading"><h2>Poslední změny</h2><span class="subtle">Potvrzené příkazy a chyby</span></div><div id="activityList" class="activity-list"><div class="empty small">Zatím žádné příkazy.</div></div></section>
+      </div>
+    </section>
+
+    <section id="manageView" class="panel manage-panel" role="tabpanel" aria-labelledby="manageTab" hidden>
+      <div class="section-heading"><div><h2>Správa modulů</h2><p class="subtle">Názvy, místnosti a připojení zařízení.</p></div><button class="btn" id="importBtn">Načíst z TinyTuya</button></div>
+      <div class="table-wrap"><table><thead><tr><th>Modul</th><th>Místnost</th><th>Připojení</th><th>Stav</th><th><span class="sr-only">Akce</span></th></tr></thead><tbody id="managementTable"></tbody></table></div>
+      <div class="management-note">Podporováno: infrapanel BOT IPH2 a spínače Tuya s nastavitelným DP zapnutí.</div>
+    </section>
+
+    <footer class="footer"><a href="index.html" data-dashboard>HanzHub</a><span>·</span><span id="versionFooter">—</span><span>·</span>IoT moduly</footer>
+  </main>
+
+  <dialog id="moduleDialog" aria-labelledby="moduleDialogTitle">
+    <form id="moduleForm">
+      <div class="dialog-heading"><div><div class="eyebrow">SPRÁVA ZAŘÍZENÍ</div><h2 id="moduleDialogTitle">Přidat modul</h2></div><button type="button" class="close-btn" data-close="moduleDialog" aria-label="Zavřít">×</button></div>
+      <div id="formError" class="notice error" role="alert" hidden></div>
+      <div class="form-grid">
+        <label>Název<input name="name" maxlength="80" placeholder="Např. infrapanel v obýváku" required></label>
+        <label>Místnost<input name="room" maxlength="80" placeholder="Např. obývací pokoj"></label>
+        <label class="full">Typ modulu<select name="driver"><option value="bot_iph2">Infrapanel BOT IPH2</option><option value="tuya_switch">Spínač / zásuvka Tuya</option></select></label>
+      </div>
+      <div id="sourceSection" class="source-section">
+        <div class="source-tabs"><label><input type="radio" name="sourceMode" value="import" checked> Z TinyTuya</label><label><input type="radio" name="sourceMode" value="manual"> Ručně</label></div>
+        <label id="candidateLabel">Zařízení<select id="candidateSelect"><option value="">Načítám zařízení…</option></select></label>
+        <p class="form-help" id="candidateHelp">Klíč se načte ze souboru na Raspberry.</p>
+      </div>
+      <div class="form-grid connection-form">
+        <label>IP adresa<input name="ip" placeholder="192.168.1.102" required></label>
+        <label>Tuya protokol<select name="version"><option>3.4</option><option>3.3</option><option>3.5</option><option>3.2</option><option>3.1</option></select></label>
+      </div>
+      <div id="manualFields" class="form-grid" hidden>
+        <label class="full">ID zařízení<input name="device_id" maxlength="64" autocomplete="off"></label>
+        <label>MAC adresa<input name="mac" placeholder="fc:3c:d7:4c:a2:dc"></label>
+        <label>Lokální klíč<input name="local_key" type="password" autocomplete="new-password"><span class="form-help" id="keyHelp">Klíč se uloží pouze na serveru.</span></label>
+      </div>
+      <label id="powerDpLabel" hidden>DP zapnutí<input name="power_dp" type="number" min="1" max="255" value="1"><span class="form-help">Použij DP typu bool z modelu svého spínače.</span></label>
+      <label class="checkbox-label"><input name="enabled" type="checkbox" checked>Povolit ovládání a načítání stavu</label>
+      <div class="dialog-actions"><button type="button" class="btn" data-close="moduleDialog">Zrušit</button><button type="submit" class="btn btn-primary" id="saveModuleBtn">Přidat modul</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="timerDialog" class="small-dialog" aria-labelledby="timerTitle">
+    <form id="timerForm"><div class="dialog-heading"><h2 id="timerTitle">Časovač panelu</h2><button type="button" class="close-btn" data-close="timerDialog" aria-label="Zavřít">×</button></div>
+      <p class="subtle">Nastav dobu odpočtu po celých hodinách.</p>
+      <label>Doba odpočtu<select id="timerHours" name="hours"></select></label>
+      <div id="timerError" class="notice error" role="alert" hidden></div>
+      <div class="dialog-actions"><button type="button" class="btn" data-close="timerDialog">Zrušit</button><button type="submit" class="btn btn-primary" id="saveTimerBtn">Nastavit</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="deleteDialog" class="small-dialog" aria-labelledby="deleteTitle">
+    <form id="deleteForm"><div class="dialog-heading"><h2 id="deleteTitle">Odebrat modul?</h2><button type="button" class="close-btn" data-close="deleteDialog" aria-label="Zavřít">×</button></div><p id="deleteText" class="subtle"></p><p class="form-help">Párování zařízení v aplikaci Tuya zůstane zachované.</p><div id="deleteError" class="notice error" role="alert" hidden></div><div class="dialog-actions"><button type="button" class="btn" data-close="deleteDialog">Zrušit</button><button class="btn btn-danger" id="deleteConfirmBtn">Odebrat</button></div></form>
+  </dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

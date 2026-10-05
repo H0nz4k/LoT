@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+data/
+devices.json
+tinytuya.json
+snapshot.json
+tuya-raw.json
+node_modules/
+test-results/
+*.bak
