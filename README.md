@@ -4,9 +4,9 @@ Samostatná služba pro lokální ovládání a správu chytrých modulů v Hanz
 
 Web zachovává styl stávajícího HanzHubu: tmavé pozadí s barevnými přechody, průsvitné karty, logo HanzHub a zelené akce. Ovládání infrapanelu má velkou cílovou teplotu s kruhovým ukazatelem, aktuální teplotu, tlačítka ±, posuvník, zapnutí, dětský zámek a časovač. Funguje na počítači i telefonu.
 
-**Verze 1.0.1:** vlastní oranžová ikona čipu s Wi-Fi pro kartu, hlavičku i favicon. Hlavička má na desktopu dva řádky; v nižším okně se zmenší mezery a ukazatel, aby bylo vidět i spodní ovládání panelu.
+**Verze 1.1.0:** přidává lokální ovládání zásuvky **TP-Link Tapo P110M** přes `python-kasa`, aktuální příkon ve W a spotřebu za den a měsíc v kWh. Zachovává oranžovou ikonu a kompaktní hlavičku z verze 1.0.1.
 
-Součástí je správa modulů: přidání ze souboru TinyTuya nebo ručně, pojmenování, místnost, úprava IP a protokolu, obnova klíče, pozastavení a odebrání. Podporován je infrapanel **BOT SMART IPH2** a obecný **spínač / zásuvka Tuya** s nastavitelným boolean DP zapnutí. Další typy lze doplnit ovladačem v `iot/iot_driver.py`; automatický univerzální ovladač pro všechny Tuya výrobky není součástí této verze.
+Součástí je správa modulů: přidání ze souboru TinyTuya nebo ručně, pojmenování, místnost, úprava IP a protokolu, obnova klíče či účtu, pozastavení a odebrání. Podporován je infrapanel **BOT SMART IPH2**, obecný **spínač / zásuvka Tuya** s nastavitelným boolean DP zapnutí a **TP-Link Tapo P110M**. Další typy lze doplnit ovladačem; automatický univerzální ovladač pro všechny IoT výrobky není součástí této verze.
 
 ## Zapojení
 
@@ -20,7 +20,7 @@ Součástí je správa modulů: přidání ze souboru TinyTuya nebo ručně, poj
 | Nová IoT služba | `http://192.168.1.3:4011` | Web, správa a lokální ovládání |
 | Infrapanel | poslední potvrzená `192.168.1.102` | Tuya protokol 3.4 |
 
-IoT používá hostitelskou síť Dockeru, aby dosáhlo na zařízení v LAN. K běžnému ovládání nepotřebuje Tuya cloud; z wizardu si načte ID a lokální klíč. Samotný panel může nadále používat Tuya aplikaci.
+IoT používá hostitelskou síť Dockeru, aby dosáhlo na zařízení v LAN. K běžnému ovládání nepotřebuje Tuya ani Tapo cloud. Pro Tuya z wizardu načte ID a lokální klíč; pro Tapo lokálně ověří údaje TP-Link účtu. Původní aplikace lze dál používat.
 
 ## Instalace na HUB
 
@@ -99,9 +99,10 @@ docker compose restart hanzhub_iot
 ## Používání a správa modulů
 
 - **Ovládání:** vyber modul vlevo. Stav se načítá po 15 sekundách. Tlačítko Obnovit vyžádá aktuální stav. Změna teploty se odešle po krátké pauze; po zápisu se znovu přečte panel a ověří se potvrzení. Při chybě se požadavek neoznačí jako úspěšný.
-- **Správa modulů:** uprav název, místnost nebo adresu. Prázdný klíč při úpravě zachová existující klíč. Pozastavení přeruší dotazování a ovládání; samo zařízení nevypne. Odebrání odstraní registraci v HanzHubu, párování v Tuya nemění.
+- **Správa modulů:** uprav název, místnost nebo adresu. Prázdný klíč při úpravě zachová existující klíč. Pozastavení přeruší dotazování a ovládání; samo zařízení nevypne. Odebrání odstraní registraci v HanzHubu, párování v původní aplikaci nemění.
 - **Přidat modul → Z TinyTuya:** nabízí zařízení v lokálním `devices.json`. Vyber podporovaný typ, zkontroluj LAN IP a verzi protokolu. Neznámým spínačům přiřaď správné DP zapnutí z jejich modelu.
 - **Načíst z TinyTuya:** obnoví ID a klíče známých modulů podle ID/MAC a přidá rozpoznaný BOT panel. Ostatní zařízení zůstanou nabídkou pro ruční výběr typu. Přejmenování, místnost a ručně nastavenou IP zachová.
+- **Přidat modul → TP-Link Tapo P110M:** vyplň IP a účet Tapo. HanzHub zásuvku lokálně rozpozná, ověří přihlášení a uloží její skutečné ID/MAC. Při přidávání ji nezapíná ani nevypíná. Úprava názvu nebo IP s prázdným e-mailem i heslem zachová uložený účet; pro změnu účtu vyplň obě pole.
 - **Po novém párování:** zařízení může dostat nové ID i klíč. Na HUBu spusť wizard, obnov mount souboru a ve správě klikni na Načíst z TinyTuya. Zkontroluj také IP zařízení.
 
 ```bash
@@ -114,6 +115,27 @@ docker compose up -d --force-recreate hanzhub_iot
 Rekonstrukce kontejneru po wizardu pokryje i případ, kdy byl `devices.json` nahrazen novým souborem. Klíč pak obnov tlačítkem ve správě.
 
 `ON` znamená zapnutý panel. Z dostupných DP nelze spolehlivě odvodit, zda právě odebírá výkon a topí. Aplikace tento údaj nevymýšlí. Stav Nedostupný je odlišný od Vypnuto. Při spuštění, importu nebo pravidelném čtení se žádný příkaz k zapnutí automaticky neposílá.
+
+## Přidání TP-Link Tapo P110M
+
+1. V aplikaci **Tapo** přidej zásuvku a připoj ji na **2,4GHz Wi-Fi HanzHub**, ve stejné LAN jako Raspberry. Po prvním nastavení můžeš dál používat aplikaci Tapo.
+2. V informacích o zásuvce nebo v DHCP seznamu zjisti její LAN IP. Je vhodné mít pro ni stálou adresu / DHCP rezervaci.
+3. Aktualizuj HanzHub IoT:
+
+   ```bash
+   cd /opt/hanzhub-iot
+   sudo sh update.sh
+   ```
+
+4. Otevři [IoT moduly](http://192.168.1.3:4011), obnov stránku **Ctrl+F5** a zvol **Přidat modul → TP-Link Tapo P110M**.
+5. Vyplň název, místnost, IP, **e-mail a heslo TP-Link účtu z aplikace Tapo**. Jde o účet Tapo; formulář nepoužívá heslo Wi-Fi ani Matter QR kód. Údaje zadávej přímo do HanzHubu.
+6. Klikni **Přidat modul**. Při prvním ověření musí být zásuvka dostupná. MAC a ID se načtou automaticky; po změně DHCP adresy ověříme stejnou identitu před každým ovládáním.
+
+Na kartě najdeš **ON/OFF**, aktuální příkon **W**, spotřebu **dnes / tento měsíc v kWh** a dostupné měření **V / A**. Nedostupné hodnoty mají `—`, nikoli vymyšlenou nulu. `ON` označuje sepnuté relé; příkon je samostatný údaj ze zásuvky. Změna zapnutí se potvrdí novým čtením stavu.
+
+Pokud Tapo odmítne přihlášení se správnými údaji, zkontroluj v aplikaci **Já / Me → Služby třetích stran / Third-Party Services → Kompatibilita třetích stran / Third-Party Compatibility**. Nabídka závisí na verzi aplikace a firmwaru. Viz [postup TP-Link](https://www.tp-link.com/us/support/faq/4416/). Není potřeba mazat DHCP ani znovu nastavovat infrapanel.
+
+Ovladač používá lokální TP-Link protokol přes [python-kasa](https://python-kasa.readthedocs.io/en/stable/); služba při ovládání nevolá Tapo cloud. Připojení fyzické P110M je nutné ověřit na tvém HUBu. Podporu modelu uvádí [seznam knihovny](https://python-kasa.readthedocs.io/en/stable/SUPPORTED.html).
 
 ## Ověřené DP infrapanelu
 
@@ -159,9 +181,9 @@ Instalátor vypíše adresář `lcd-backup-…` s původními soubory. Obnovu pr
 
 ## Data a přístup
 
-Registrace modulů, lokální klíče a posledních 500 příkazů jsou v SQLite v Docker volume `hanzhub-iot_iot_data`, uvnitř kontejneru `/var/lib/hanzhub-iot/modules.sqlite3`. Adresář má režim 0700 a databáze 0600. Restart, aktualizace ani běžné `docker compose down` data nemažou. Příkaz `docker compose down -v` by volume s registrací odstranil.
+Registrace modulů, lokální klíče, účty Tapo a posledních 500 příkazů jsou v SQLite v Docker volume `hanzhub-iot_iot_data`, uvnitř kontejneru `/var/lib/hanzhub-iot/modules.sqlite3`. Adresář má režim 0700 a databáze 0600. Účty i klíče jsou v databázi uloženy čitelně pro provoz služby; patří do neveřejné zálohy. Restart, aktualizace ani běžné `docker compose down` data nemažou. Příkaz `docker compose down -v` by volume s registrací odstranil. Přechod z 1.0.x automaticky doplní sloupce pro Tapo a zachová moduly, klíče i historii.
 
-`devices.json` je připojen pouze ke čtení. Cloudové API údaje z `tinytuya.json` aplikace nepoužívá. Klíče nejsou v odpovědích API, logu, statickém webu ani GitHubu. Databáze obsahuje klíče a patří do neveřejné zálohy.
+`devices.json` je připojen pouze ke čtení. Cloudové API údaje z `tinytuya.json` aplikace nepoužívá. Klíče ani účet Tapo nejsou v odpovědích API, logu, statickém webu ani GitHubu. Formulář účtu se při zavření vymaže a neposílá se do localStorage. Veřejné API vrací pouze příznak `has_credentials`.
 
 Ovládání, správa a stavové API jsou dostupné z LAN a loopbacku; požadavky z veřejné IP předané přes Cloudflare se odmítají. Ovládání přes internet zatím není součástí této verze. UI a API běží na stejné adrese a portu, nepotřebují CORS proxy.
 
@@ -185,15 +207,17 @@ Tělo příkazu například: `{"control":"target_temp_c","value":26}`. Podporova
 ## Vývoj a ověření
 
 ```bash
-python3 -m unittest discover -s tests -v
+python3 -m venv .venv
+.venv/bin/python -m pip install -r iot/requirements.txt
+.venv/bin/python -m unittest discover -s tests -v
 python3 -m compileall -q iot lcd integrations install.py
 node --check web/iot.js
 sh -n install.sh update.sh
 docker compose config --quiet
 ```
 
-Testy pokrývají mapování DP, rozsahy a typy, potvrzování zápisu, timer, poruchy, výpadek, registr a obnovu klíče po párování, serializaci příkazů, HTTP API, skrytí klíčů, LCD i opakované napojení dashboardu. Používají výslovně testovací transport a žádné skutečné zařízení nezapínají. GitHub Actions tyto kontroly spouští při pushi i PR.
+Testy pokrývají mapování DP, rozsahy a typy, potvrzování zápisu, timer, poruchy, výpadek, registr a obnovu klíče po párování, serializaci příkazů, HTTP API, skrytí klíčů a účtů, LCD i opakované napojení dashboardu. Tapo testy ověřují čtení a potvrzené přepnutí, zaměněnou zásuvku na stejné IP, chyby autentizace, obnovu účtu a migraci původní databáze. Ověřují také jednotky přímo na Energy modulu připnuté knihovny. Používají výslovně testovací transport a žádné skutečné zařízení nezapínají. GitHub Actions tyto kontroly spouští při pushi i PR.
 
-Ve verzi 1.0.1 prošlo 32 automatických testů a kontrola syntaxe Python/JavaScript/shell. V prostředí přípravy nebyl Docker ani přístup k framebufferu Raspberry; sestavení ARM kontejneru, skutečné LCD a ostatní ovládací funkce je nutné ověřit na HUBu. Cloudový prohlížeč zde nepovolil přístup k lokálnímu portu pro vizuální ověření webu.
+Ve verzi 1.1.0 prošlo 45 automatických testů a kontrola syntaxe Python/JavaScript/shell. V prostředí přípravy nebyl Docker ani přístup k framebufferu Raspberry; sestavení ARM kontejneru, skutečné LCD a ovládání fyzické zásuvky je nutné ověřit na HUBu. Cloudový prohlížeč zde nepovolil přístup k lokálnímu portu pro vizuální ověření webu.
 
 Zdroje: [TinyTuya](https://github.com/jasonacox/tinytuya), [potvrzený Tuya thing model endpoint](https://developer.tuya.com/en/docs/cloud/bd68171262?id=Kcp4utbhzzfgo), [původní HanzHub Dashboard](https://github.com/H0nz4k/Dashboard).

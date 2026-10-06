@@ -8,8 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="iot.css?v=1.0.1">
-  <script src="iot.js?v=1.0.1" defer></script>
+  <link rel="stylesheet" href="iot.css?v=1.1.0">
+  <script src="iot.js?v=1.1.0" defer></script>
 </head>
 <body>
   <svg class="svg-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -21,6 +21,7 @@
     <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8"/></symbol>
     <symbol id="icon-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l4-1L20 7a2 2 0 0 0-3-3L5 16l-1 4Z"/></symbol>
     <symbol id="icon-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M8 14a6 6 0 1 1 8 0c-1 1-1 2-1 4H9c0-2 0-3-1-4Z"/></symbol>
+    <symbol id="icon-plug" viewBox="0 0 24 24"><path d="M8 3v5m8-5v5M6 8h12v4a6 6 0 0 1-12 0V8Zm6 10v4"/></symbol>
     <symbol id="icon-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
   </svg>
   <main class="wrap">
@@ -62,7 +63,7 @@
     <section id="manageView" class="panel manage-panel" role="tabpanel" aria-labelledby="manageTab" hidden>
       <div class="section-heading"><div><h2>Správa modulů</h2><p class="subtle">Názvy, místnosti a připojení zařízení.</p></div><button class="btn" id="importBtn">Načíst z TinyTuya</button></div>
       <div class="table-wrap"><table><thead><tr><th>Modul</th><th>Místnost</th><th>Připojení</th><th>Stav</th><th><span class="sr-only">Akce</span></th></tr></thead><tbody id="managementTable"></tbody></table></div>
-      <div class="management-note">Podporováno: infrapanel BOT IPH2 a spínače Tuya s nastavitelným DP zapnutí.</div>
+      <div class="management-note">Podporováno: infrapanel BOT IPH2, spínače Tuya a zásuvka TP-Link Tapo P110M.</div>
     </section>
 
     <footer class="footer"><a href="index.html" data-dashboard>HanzHub</a><span>·</span><span id="versionFooter">—</span><span>·</span>IoT moduly</footer>
@@ -75,7 +76,7 @@
       <div class="form-grid">
         <label>Název<input name="name" maxlength="80" placeholder="Např. infrapanel v obýváku" required></label>
         <label>Místnost<input name="room" maxlength="80" placeholder="Např. obývací pokoj"></label>
-        <label class="full">Typ modulu<select name="driver"><option value="bot_iph2">Infrapanel BOT IPH2</option><option value="tuya_switch">Spínač / zásuvka Tuya</option></select></label>
+        <label class="full">Typ modulu<select name="driver"><option value="bot_iph2">Infrapanel BOT IPH2</option><option value="tuya_switch">Spínač / zásuvka Tuya</option><option value="tapo_p110m">TP-Link Tapo P110M</option></select></label>
       </div>
       <div id="sourceSection" class="source-section">
         <div class="source-tabs"><label><input type="radio" name="sourceMode" value="import" checked> Z TinyTuya</label><label><input type="radio" name="sourceMode" value="manual"> Ručně</label></div>
@@ -84,12 +85,20 @@
       </div>
       <div class="form-grid connection-form">
         <label>IP adresa<input name="ip" placeholder="192.168.1.102" required></label>
-        <label>Tuya protokol<select name="version"><option>3.4</option><option>3.3</option><option>3.5</option><option>3.2</option><option>3.1</option></select></label>
+        <label id="tuyaVersionLabel">Tuya protokol<select name="version"><option>3.4</option><option>3.3</option><option>3.5</option><option>3.2</option><option>3.1</option></select></label>
+        <label id="macLabel">MAC adresa<input name="mac" placeholder="fc:3c:d7:4c:a2:dc"></label>
       </div>
       <div id="manualFields" class="form-grid" hidden>
         <label class="full">ID zařízení<input name="device_id" maxlength="64" autocomplete="off"></label>
-        <label>MAC adresa<input name="mac" placeholder="fc:3c:d7:4c:a2:dc"></label>
         <label>Lokální klíč<input name="local_key" type="password" autocomplete="new-password"><span class="form-help" id="keyHelp">Klíč se uloží pouze na serveru.</span></label>
+      </div>
+      <div id="tapoFields" hidden>
+        <p class="form-help tapo-help">Zásuvka musí být přidaná v aplikaci Tapo a na stejné síti jako HanzHub. Přihlášení ověříme a zařízení rozpoznáme bez změny jeho zapnutí.</p>
+        <div class="form-grid">
+          <label>Účet Tapo (e-mail)<input name="tapo_username" type="email" maxlength="254" autocomplete="off"></label>
+          <label>Heslo účtu Tapo<input name="tapo_password" type="password" maxlength="512" autocomplete="new-password"></label>
+        </div>
+        <p class="form-help" id="tapoCredentialsHelp">Účet se uloží pouze na serveru HanzHubu. Pro běžné ovládání používáme místní síť.</p>
       </div>
       <label id="powerDpLabel" hidden>DP zapnutí<input name="power_dp" type="number" min="1" max="255" value="1"><span class="form-help">Použij DP typu bool z modelu svého spínače.</span></label>
       <label class="checkbox-label"><input name="enabled" type="checkbox" checked>Povolit ovládání a načítání stavu</label>
@@ -107,7 +116,7 @@
   </dialog>
 
   <dialog id="deleteDialog" class="small-dialog" aria-labelledby="deleteTitle">
-    <form id="deleteForm"><div class="dialog-heading"><h2 id="deleteTitle">Odebrat modul?</h2><button type="button" class="close-btn" data-close="deleteDialog" aria-label="Zavřít">×</button></div><p id="deleteText" class="subtle"></p><p class="form-help">Párování zařízení v aplikaci Tuya zůstane zachované.</p><div id="deleteError" class="notice error" role="alert" hidden></div><div class="dialog-actions"><button type="button" class="btn" data-close="deleteDialog">Zrušit</button><button class="btn btn-danger" id="deleteConfirmBtn">Odebrat</button></div></form>
+    <form id="deleteForm"><div class="dialog-heading"><h2 id="deleteTitle">Odebrat modul?</h2><button type="button" class="close-btn" data-close="deleteDialog" aria-label="Zavřít">×</button></div><p id="deleteText" class="subtle"></p><p class="form-help">Párování zařízení v původní aplikaci zůstane zachované.</p><div id="deleteError" class="notice error" role="alert" hidden></div><div class="dialog-actions"><button type="button" class="btn" data-close="deleteDialog">Zrušit</button><button class="btn btn-danger" id="deleteConfirmBtn">Odebrat</button></div></form>
   </dialog>
   <div id="toast" class="toast" role="status" hidden></div>
 </body>

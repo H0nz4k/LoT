@@ -1,1 +1,2 @@
 tinytuya==1.20.0
+python-kasa==0.11.0.1

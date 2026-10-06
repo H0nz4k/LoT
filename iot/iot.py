@@ -11,13 +11,15 @@ import time
 import uuid
 
 from iot_driver import DRIVERS, IoTError, LocalTuya, check_bool, check_int, utc_now, validate_command
+from tapo_driver import LocalTapo
 
 PANEL_MAC = "fc:3c:d7:4c:a2:dc"
 PRIVATE_NETWORKS = tuple(IPv4Network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 PUBLIC_FIELDS = ("id", "name", "room", "driver", "device_id", "mac", "ip", "version",
                  "power_dp", "enabled", "created_at", "updated_at")
 EDIT_FIELDS = {"name", "room", "driver", "device_id", "mac", "ip", "version", "power_dp",
-               "enabled", "local_key", "source_id"}
+               "enabled", "local_key", "source_id", "tapo_username", "tapo_password"}
+SECRET_FIELDS = ("local_key", "tapo_username", "tapo_password")
 
 
 def normalize_mac(value):
@@ -47,11 +49,12 @@ def text_value(value, label, limit, required=False):
 
 
 class IoTManager:
-    def __init__(self, data_dir=None, devices_file=None, adapter=None, cache_seconds=8):
+    def __init__(self, data_dir=None, devices_file=None, adapter=None, cache_seconds=8, tapo_adapter=None):
         self.data_dir = Path(data_dir or os.environ.get("HANZHUB_IOT_DATA_DIR", "/var/lib/hanzhub-iot"))
         self.devices_file = Path(devices_file or os.environ.get(
             "HANZHUB_IOT_DEVICES_FILE", "/run/hanzhub-iot/devices.json"))
         self.adapter = adapter or LocalTuya()
+        self.tapo_adapter = tapo_adapter or LocalTapo()
         self.cache_seconds = cache_seconds
         self._cache = {}
         self._locks = {}
@@ -76,6 +79,10 @@ class IoTManager:
                     );
                     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 """)
+                columns = {row["name"] for row in db.execute("PRAGMA table_info(modules)")}
+                for field in ("tapo_username", "tapo_password"):
+                    if field not in columns:
+                        db.execute(f"ALTER TABLE modules ADD COLUMN {field} TEXT NOT NULL DEFAULT ''")
             os.chmod(self.db_path, 0o600)
         except OSError:
             raise IoTError("Nelze otevřít úložiště IoT modulů.", 503, "storage_unavailable") from None
@@ -114,6 +121,7 @@ class IoTManager:
     def _public(self, module):
         public = {k: module[k] for k in PUBLIC_FIELDS}
         public["has_key"] = bool(module["local_key"])
+        public["has_credentials"] = bool(module["tapo_username"] and module["tapo_password"])
         public["capabilities"] = DRIVERS[module["driver"]]
         with self._guard:
             cached = self._cache.get(module["id"])
@@ -165,7 +173,8 @@ class IoTManager:
         if not isinstance(data, dict) or set(data) - EDIT_FIELDS:
             raise IoTError("Neplatná pole konfigurace modulu.")
         merged = {"name": "", "room": "", "driver": "bot_iph2", "version": "3.4",
-                  "power_dp": 1, "enabled": True, "mac": None}
+                  "power_dp": 1, "enabled": True, "mac": None,
+                  "tapo_username": "", "tapo_password": ""}
         if current:
             merged.update(current)
         if data.get("source_id"):
@@ -180,28 +189,57 @@ class IoTManager:
             merged["local_key"] = current["local_key"]
         merged["name"] = text_value(merged["name"], "Název", 80, True)
         merged["room"] = text_value(merged["room"], "Místnost", 80)
-        merged["device_id"] = text_value(merged.get("device_id", ""), "ID zařízení", 64, True)
         if not isinstance(merged["driver"], str) or merged["driver"] not in DRIVERS:
             raise IoTError("Zvolený typ modulu není podporovaný.")
+        tapo = merged["driver"] == "tapo_p110m"
+        if current and tapo != (current["driver"] == "tapo_p110m"):
+            raise IoTError("Pro změnu mezi Tapo a Tuya odeberte modul a přidejte jej znovu.")
+        merged["device_id"] = text_value(merged.get("device_id", ""), "ID zařízení", 64, not tapo)
         merged["mac"] = normalize_mac(merged["mac"])
         merged["ip"] = local_address(merged.get("ip", ""))
-        if merged["version"] not in ("3.1", "3.2", "3.3", "3.4", "3.5"):
-            raise IoTError("Nepodporovaná verze Tuya protokolu.")
-        key = merged.get("local_key", "")
-        if not isinstance(key, str) or len(key.encode("utf-8")) != 16:
-            raise IoTError("Lokální klíč musí mít 16 bytů. Načtěte jej přes TinyTuya wizard.")
-        merged["power_dp"] = check_int(merged["power_dp"], 1, 255)
-        if merged["driver"] == "bot_iph2":
-            merged["power_dp"] = 1
+        if tapo:
+            if data.get("source_id") or data.get("local_key"):
+                raise IoTError("Tapo používá účet TP-Link, nikoli TinyTuya klíč.")
+            if current:
+                if bool(data.get("tapo_username")) != bool(data.get("tapo_password")):
+                    raise IoTError("Pro změnu účtu vyplňte e-mail i heslo. Obě prázdná pole zachovají uložený účet.")
+                for field in ("tapo_username", "tapo_password"):
+                    if data.get(field) == "":
+                        merged[field] = current[field]
+            merged["tapo_username"] = text_value(merged["tapo_username"], "Účet Tapo", 254, True)
+            password = merged["tapo_password"]
+            if not isinstance(password, str) or not 1 <= len(password) <= 512:
+                raise IoTError("Vyplňte heslo účtu Tapo (nejvýše 512 znaků).")
+            merged.update(version="auto", power_dp=1, local_key="")
+        else:
+            if data.get("tapo_username") or data.get("tapo_password"):
+                raise IoTError("Účet Tapo patří pouze k modulu Tapo P110M.")
+            if merged["version"] not in ("3.1", "3.2", "3.3", "3.4", "3.5"):
+                raise IoTError("Nepodporovaná verze Tuya protokolu.")
+            key = merged.get("local_key", "")
+            if not isinstance(key, str) or len(key.encode("utf-8")) != 16:
+                raise IoTError("Lokální klíč musí mít 16 bytů. Načtěte jej přes TinyTuya wizard.")
+            merged["power_dp"] = check_int(merged["power_dp"], 1, 255)
+            if merged["driver"] == "bot_iph2":
+                merged["power_dp"] = 1
+            merged.update(tapo_username="", tapo_password="")
         merged["enabled"] = check_bool(merged["enabled"])
         return merged
 
     def add_module(self, data):
         module = self._validated(data)
+        initial_state = None
+        if module["driver"] == "tapo_p110m":
+            # Jen čtení: ověří účet, model a skutečnou identitu ještě před uložením.
+            initial_state = self.tapo_adapter.status(module)
+            module["device_id"] = text_value(initial_state.get("device_id", ""), "ID zařízení", 64, True)
+            module["mac"] = normalize_mac(initial_state.get("mac"))
+            if not module["mac"]:
+                raise IoTError("Zásuvka nevrátila MAC adresu.", 502, "invalid_response")
         module_id = uuid.uuid4().hex[:12]
         now = utc_now()
         values = {**module, "id": module_id, "created_at": now, "updated_at": now}
-        columns = (*PUBLIC_FIELDS, "local_key")
+        columns = (*PUBLIC_FIELDS, *SECRET_FIELDS)
         try:
             with self._db() as db:
                 count = db.execute("SELECT COUNT(*) FROM modules").fetchone()[0]
@@ -211,6 +249,10 @@ class IoTManager:
                            tuple(values[k] for k in columns))
         except sqlite3.IntegrityError:
             raise IoTError("Zařízení s tímto ID nebo MAC už je přidané.", 409, "duplicate") from None
+        if initial_state is not None and module["enabled"]:
+            initial_state["checked_at"] = utc_now()
+            with self._guard:
+                self._cache[module_id] = (time.monotonic(), initial_state)
         return self.get_module(module_id)
 
     def update_module(self, module_id, data):
@@ -219,7 +261,7 @@ class IoTManager:
             module = self._validated(data, current)
             module["updated_at"] = utc_now()
             columns = ("name", "room", "driver", "device_id", "mac", "ip", "version", "power_dp",
-                       "enabled", "local_key", "updated_at")
+                       "enabled", *SECRET_FIELDS, "updated_at")
             try:
                 with self._db() as db:
                     db.execute(f"UPDATE modules SET {','.join(k + ' = ?' for k in columns)} WHERE id = ?",
@@ -259,7 +301,7 @@ class IoTManager:
             try:
                 mac = normalize_mac(row.get("mac"))
                 with self._db() as db:
-                    existing = db.execute("SELECT id FROM modules WHERE device_id = ? OR (mac IS NOT NULL AND mac = ?)",
+                    existing = db.execute("SELECT id FROM modules WHERE driver != 'tapo_p110m' AND (device_id = ? OR (mac IS NOT NULL AND mac = ?))",
                                           (row["id"], mac)).fetchone()
                 if existing:
                     # Zachová ručně zvolenou IP a uživatelské názvy; obnoví identitu a klíč po přepárování.
@@ -292,7 +334,8 @@ class IoTManager:
                 if cached and not fresh and time.monotonic() - cached[0] < self.cache_seconds:
                     return dict(cached[1])
             try:
-                state = self.adapter.status(module)
+                adapter = self.tapo_adapter if module["driver"] == "tapo_p110m" else self.adapter
+                state = adapter.status(module)
             except IoTError as error:
                 state = {"online": False, "error": str(error), "error_code": error.code}
             state["checked_at"] = utc_now()
@@ -310,7 +353,8 @@ class IoTManager:
             # Typ se mohl změnit během čekání na zámek.
             validate_command(module["driver"], command)
             try:
-                state = self.adapter.command(module, command)
+                adapter = self.tapo_adapter if module["driver"] == "tapo_p110m" else self.adapter
+                state = adapter.command(module, command)
             except IoTError as error:
                 with self._guard:
                     self._cache.pop(module_id, None)
@@ -319,7 +363,7 @@ class IoTManager:
             state["checked_at"] = utc_now()
             with self._guard:
                 self._cache[module_id] = (time.monotonic(), state)
-            self._event(module_id, control, value, True, "Potvrzeno panelem")
+            self._event(module_id, control, value, True, "Potvrzeno zařízením")
             return state
 
     def _event(self, module_id, control, value, ok, message):

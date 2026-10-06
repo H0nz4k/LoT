@@ -23,6 +23,12 @@ DRIVERS = {
         "kind": "switch",
         "controls": ["power"],
     },
+    "tapo_p110m": {
+        "name": "TP-Link Tapo P110M",
+        "kind": "plug",
+        "controls": ["power"],
+        "energy": True,
+    },
 }
 
 

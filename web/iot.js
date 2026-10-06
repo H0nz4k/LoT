@@ -10,6 +10,8 @@ const icon = name => `<svg aria-hidden="true"><use href="#icon-${name}"/></svg>`
 const current = () => app.modules.find(m => m.id === app.selected);
 const timeLabel = value => value ? new Date(value).toLocaleTimeString('cs-CZ', {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '—';
 const plural = (n, one, few, many) => n === 1 ? one : n >= 2 && n <= 4 ? few : many;
+const measurement = (value, digits = 1) => typeof value === 'number' && Number.isFinite(value)
+  ? value.toLocaleString('cs-CZ', {maximumFractionDigits:digits}) : '—';
 
 async function api(path, options = {}) {
   const response = await fetch('/api/iot' + path, {cache:'no-store', signal:AbortSignal.timeout(20000), ...options});
@@ -52,21 +54,27 @@ function renderList() {
   const modules = app.modules.filter(m => `${m.name} ${m.room}`.toLocaleLowerCase('cs-CZ').includes(query));
   $('moduleList').innerHTML = modules.map(m => {
     const heater = m.driver === 'bot_iph2', s = m.state;
-    const reading = s?.online ? heater ? `${s.current_temp_c} °C <span class="subtle">/ ${s.target_temp_c} °C</span>` : s.power ? 'ON' : 'OFF' : '—';
+    let reading = '—';
+    if (s?.online) {
+      reading = heater ? `${s.current_temp_c} °C <span class="subtle">/ ${s.target_temp_c} °C</span>` : s.power ? 'ON' : 'OFF';
+      if (m.driver === 'tapo_p110m' && typeof s.power_w === 'number') reading += ` <span class="subtle">· ${measurement(s.power_w)} W</span>`;
+    }
     return `<button class="module-card" data-select="${m.id}" aria-pressed="${m.id === app.selected}" ${app.busy ? 'disabled' : ''}>
-      <div class="module-card-top"><span class="module-icon ${heater ? '' : 'switch'}">${icon(heater ? 'heat' : 'bulb')}</span><div><div class="module-name">${esc(m.name)}</div><div class="module-room">${esc(m.room || 'Místnost není přiřazená')}</div></div></div>
+      <div class="module-card-top"><span class="module-icon ${heater ? '' : 'switch'}">${icon(heater ? 'heat' : m.driver === 'tapo_p110m' ? 'plug' : 'bulb')}</span><div><div class="module-name">${esc(m.name)}</div><div class="module-room">${esc(m.room || 'Místnost není přiřazená')}</div></div></div>
       <div class="module-card-bottom"><span>${statusDot(m)}${statusLabel(m)}</span><span class="module-reading">${reading}</span></div></button>`;
   }).join('') || `<div class="empty small">${query ? 'Žádné zařízení neodpovídá hledání.' : 'Zatím nemáš přidané moduly.'}</div>`;
 }
 function renderManagement() {
-  $('managementTable').innerHTML = app.modules.map(m => `<tr><td><div class="table-name">${esc(m.name)}</div><div class="table-type">${esc(m.capabilities.name)}</div></td><td data-label="Místnost">${esc(m.room || '—')}</td><td data-label="IP"><span class="table-ip">${esc(m.ip)}</span><div class="table-type">Tuya ${esc(m.version)}</div></td><td data-label="Stav">${statusDot(m)}${statusLabel(m)}</td><td><div class="table-actions"><button class="btn btn-sm" data-edit="${m.id}" ${app.busy ? 'disabled' : ''}>Upravit</button><button class="btn btn-sm btn-danger" data-delete="${m.id}" ${app.busy ? 'disabled' : ''}>Odebrat</button></div></td></tr>`).join('') || '<tr><td colspan="5"><div class="empty small">Přidej první modul nebo jej načti z TinyTuya.</div></td></tr>';
+  $('managementTable').innerHTML = app.modules.map(m => `<tr><td><div class="table-name">${esc(m.name)}</div><div class="table-type">${esc(m.capabilities.name)}</div></td><td data-label="Místnost">${esc(m.room || '—')}</td><td data-label="IP"><span class="table-ip">${esc(m.ip)}</span><div class="table-type">${m.driver === 'tapo_p110m' ? 'Tapo · lokálně' : `Tuya ${esc(m.version)}`}</div></td><td data-label="Stav">${statusDot(m)}${statusLabel(m)}</td><td><div class="table-actions"><button class="btn btn-sm" data-edit="${m.id}" ${app.busy ? 'disabled' : ''}>Upravit</button><button class="btn btn-sm btn-danger" data-delete="${m.id}" ${app.busy ? 'disabled' : ''}>Odebrat</button></div></td></tr>`).join('') || '<tr><td colspan="5"><div class="empty small">Přidej první modul nebo jej načti z TinyTuya.</div></td></tr>';
 }
 function controllerMarkup(module) {
   const heater = module.driver === 'bot_iph2';
+  const tapo = module.driver === 'tapo_p110m';
   return `<div class="device-header"><div><h2 id="deviceName"></h2><p class="device-meta" id="deviceMeta"></p></div><div class="device-header-actions"><span id="powerBadge" class="power-badge"></span><button class="icon-btn" data-action="edit" title="Upravit modul" aria-label="Upravit modul">${icon('edit')}</button></div></div>
     <div id="deviceNotice" class="notice error device-notice" role="alert" hidden></div>
     ${heater ? `<div class="gauge"><svg viewBox="0 0 330 258" aria-hidden="true"><defs><linearGradient id="gaugeGradient" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#fbbf24"/><stop offset="1" stop-color="#f97316"/></linearGradient></defs><path class="gauge-track" d="M63 225 A134 134 0 1 1 267 225" pathLength="100"/><path id="gaugeProgress" class="gauge-progress" d="M63 225 A134 134 0 1 1 267 225" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"/></svg><div class="gauge-values"><div class="gauge-label">Požadovaná teplota</div><div class="target-temperature"><strong id="targetValue">—</strong><span>°C</span></div><div class="current-reading">${icon('temp')}Aktuálně <strong id="currentValue">—</strong></div></div><span class="gauge-min">0 °C</span><span class="gauge-max">37 °C</span></div>
-    <div class="temp-controls"><button id="tempMinus" class="temp-step" data-action="minus" aria-label="Snížit cílovou teplotu">−</button><input id="targetRange" type="range" min="0" max="37" step="1" aria-label="Cílová teplota v °C"><button id="tempPlus" class="temp-step" data-action="plus" aria-label="Zvýšit cílovou teplotu">+</button></div><div id="tempFeedback" class="temperature-feedback" role="status"></div>` : `<div id="switchDisplay" class="switch-display">${icon('bulb')}<h3 id="switchState">—</h3><p>Stav spínače</p></div>`}
+    <div class="temp-controls"><button id="tempMinus" class="temp-step" data-action="minus" aria-label="Snížit cílovou teplotu">−</button><input id="targetRange" type="range" min="0" max="37" step="1" aria-label="Cílová teplota v °C"><button id="tempPlus" class="temp-step" data-action="plus" aria-label="Zvýšit cílovou teplotu">+</button></div><div id="tempFeedback" class="temperature-feedback" role="status"></div>` : tapo ? `<div id="switchDisplay" class="switch-display meter-display">${icon('plug')}<p>Aktuální příkon</p><div class="power-reading"><strong id="powerValue">—</strong><span>W</span></div><span id="switchState" class="plug-state">—</span></div>
+    <div class="energy-readings"><div><span>Dnes</span><strong id="energyToday">—</strong><small>kWh</small></div><div><span>Tento měsíc</span><strong id="energyMonth">—</strong><small>kWh</small></div><div><span>Napětí</span><strong id="voltageValue">—</strong><small>V</small></div><div><span>Proud</span><strong id="currentAmps">—</strong><small>A</small></div></div><p id="energyNotice" class="meter-help"></p>` : `<div id="switchDisplay" class="switch-display">${icon('bulb')}<h3 id="switchState">—</h3><p>Stav spínače</p></div>`}
     <div class="device-controls ${heater ? '' : 'switch-controls'}"><button id="powerButton" class="control-button" data-action="power">${icon('power')}<strong id="powerAction">Zapnutí</strong><small id="powerText">—</small></button>${heater ? `<button id="lockButton" class="control-button" data-action="lock">${icon('lock')}<strong>Dětský zámek</strong><small id="lockText">—</small></button><button id="timerButton" class="control-button" data-action="timer">${icon('clock')}<strong>Časovač</strong><small id="timerText">—</small></button>` : ''}</div>
     <div class="device-footer"><span id="lastObserved">Čekám na stav…</span><button data-action="refresh">${icon('refresh')}Načíst stav</button></div>`;
 }
@@ -74,7 +82,7 @@ function updateController() {
   const m = current();
   if (!m) {
     app.controllerId = null;
-    $('controller').classList.remove('is-on');
+    $('controller').classList.remove('is-on', 'is-plug');
     $('controller').innerHTML = `<div class="empty"><span class="empty-icon">${icon('grid')}</span><strong>Začni prvním modulem</strong><p>Přidej zařízení a ovládej jej z HanzHubu.</p><button class="btn btn-primary" data-action="add">+ Přidat modul</button></div>`;
     return;
   }
@@ -87,6 +95,7 @@ function updateController() {
   $('powerBadge').className = 'power-badge' + (online ? s.power ? ' on' : ' off' : '');
   $('powerBadge').textContent = online ? s.power ? 'Zapnuto' : 'Vypnuto' : statusLabel(m);
   $('controller').classList.toggle('is-on', online && s.power);
+  $('controller').classList.toggle('is-plug', m.driver === 'tapo_p110m');
   const fault = online && s.faults?.length ? s.faults.join(' · ') : null;
   showError('deviceNotice', !m.enabled ? 'Modul je pozastavený. Povol jej ve správě.' : s && !online ? s.error || 'Modul je nedostupný. Zkontroluj napájení a připojení k Wi-Fi.' : fault);
   $('powerButton').disabled = !ready;
@@ -108,7 +117,16 @@ function updateController() {
     $('tempFeedback').textContent = app.pendingTemp !== null ? app.busy ? 'Ukládám teplotu…' : 'Za okamžik uložím nový cíl…' : app.busy ? 'Odesílám příkaz…' : online ? 'Cílová teplota · změny se uloží automaticky' : 'Teplota bude dostupná po připojení.';
   } else {
     $('switchDisplay').classList.toggle('on', online && s.power);
+    $('switchDisplay').classList.toggle('off', online && !s.power);
     $('switchState').textContent = online ? s.power ? 'ON' : 'OFF' : '—';
+    if (m.driver === 'tapo_p110m') {
+      for (const [id, field, digits] of [['powerValue','power_w',1], ['energyToday','energy_today_kwh',3],
+        ['energyMonth','energy_month_kwh',3], ['voltageValue','voltage_v',1], ['currentAmps','current_a',3]]) {
+        $(id).textContent = online ? measurement(s[field], digits) : '—';
+      }
+      const hasEnergy = online && ['power_w','energy_today_kwh','energy_month_kwh'].some(field => typeof s[field] === 'number');
+      $('energyNotice').textContent = online ? hasEnergy ? 'Údaje ze zásuvky · napětí a proud podle dostupnosti měření.' : 'Zásuvka nyní neposkytuje údaje o spotřebě.' : 'Měření bude dostupné po připojení.';
+    }
   }
   $('lastObserved').textContent = s?.checked_at ? `Poslední načtení ${timeLabel(s.checked_at)}` : 'Čekám na stav…';
   $('controller').querySelectorAll('[data-action="edit"],[data-action="refresh"]').forEach(b => { b.disabled = app.busy; });
@@ -200,17 +218,29 @@ function changeView(manage) {
 }
 function sourceMode() { return app.editing ? 'manual' : document.querySelector('[name="sourceMode"]:checked').value; }
 function updateFormFields() {
-  const form = $('moduleForm'), manual = sourceMode() === 'manual';
+  const form = $('moduleForm'), tapo = form.elements.driver.value === 'tapo_p110m';
+  const manual = !tapo && sourceMode() === 'manual';
+  $('sourceSection').hidden = !!app.editing || tapo;
+  $('tuyaVersionLabel').hidden = tapo;
+  $('macLabel').hidden = !manual;
+  $('tapoFields').hidden = !tapo;
   $('manualFields').hidden = !manual; $('candidateLabel').hidden = manual;
   $('candidateHelp').hidden = manual;
   form.elements.device_id.required = manual;
   form.elements.local_key.required = manual && !app.editing;
+  form.elements.tapo_username.required = tapo && !app.editing;
+  form.elements.tapo_password.required = tapo && !app.editing;
+  $('tapoCredentialsHelp').textContent = app.editing
+    ? 'Nech e-mail i heslo prázdné pro zachování uloženého účtu. Pro změnu vyplň obě pole.'
+    : 'Účet se uloží pouze na serveru HanzHubu. Pro běžné ovládání používáme místní síť.';
   $('powerDpLabel').hidden = form.elements.driver.value !== 'tuya_switch';
 }
 async function openModule(id = null) {
   if (app.busy || app.formBusy) return;
   clearPending(); updateController();
-  const form = $('moduleForm'); form.reset(); app.editing = id; app.candidates = [];
+  const form = $('moduleForm'); form.reset(); form.elements.driver.disabled = false;
+  app.editing = id; app.candidates = [];
+  form.elements.driver.querySelector('option[value="tapo_p110m"]').disabled = false;
   showError('formError', '');
   $('moduleDialogTitle').textContent = id ? 'Upravit modul' : 'Přidat modul';
   $('saveModuleBtn').textContent = id ? 'Uložit změny' : 'Přidat modul';
@@ -220,6 +250,9 @@ async function openModule(id = null) {
     const module = app.modules.find(m => m.id === id);
     if (!module) return;
     for (const field of ['name','room','driver','ip','version','device_id','mac','power_dp']) form.elements[field].value = module[field] ?? '';
+    form.elements.version.value = module.driver === 'tapo_p110m' ? '3.4' : module.version;
+    form.elements.driver.disabled = module.driver === 'tapo_p110m';
+    form.elements.driver.querySelector('option[value="tapo_p110m"]').disabled = module.driver !== 'tapo_p110m';
     form.elements.enabled.checked = module.enabled;
   } else {
     $('candidateSelect').innerHTML = '<option value="">Načítám zařízení…</option>';
@@ -251,12 +284,17 @@ function applyCandidate() {
 async function submitModule(event) {
   event.preventDefault(); if (app.formBusy) return;
   const form = event.target, data = Object.fromEntries(new FormData(form));
-  const payload = {name:data.name, room:data.room, driver:data.driver, ip:data.ip, version:data.version,
-    power_dp:Number(data.power_dp), enabled:form.elements.enabled.checked};
-  if (sourceMode() === 'import') {
+  const payload = {name:data.name, room:data.room, driver:form.elements.driver.value, ip:data.ip,
+    enabled:form.elements.enabled.checked};
+  if (payload.driver === 'tapo_p110m') {
+    Object.assign(payload, {tapo_username:data.tapo_username, tapo_password:data.tapo_password});
+  } else {
+    Object.assign(payload, {version:data.version, power_dp:Number(data.power_dp)});
+    if (sourceMode() === 'import') {
     payload.source_id = $('candidateSelect').value;
     if (!payload.source_id) { showError('formError','Vyber zařízení nebo zvol ruční přidání.'); return; }
-  } else Object.assign(payload, {device_id:data.device_id, mac:data.mac || null, local_key:data.local_key});
+    } else Object.assign(payload, {device_id:data.device_id, mac:data.mac || null, local_key:data.local_key});
+  }
   app.formBusy = true; $('saveModuleBtn').disabled = true; showError('formError','');
   try {
     const id = app.editing;
@@ -355,6 +393,9 @@ $('importBtn').addEventListener('click', async () => {
 document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('cancel', event => {
   if (app.formBusy || app.busy) event.preventDefault();
 }));
+$('moduleDialog').addEventListener('close', () => {
+  for (const field of ['local_key','tapo_username','tapo_password']) $('moduleForm').elements[field].value = '';
+});
 $('timerHours').innerHTML = Array.from({length:25}, (_, h) => `<option value="${h}">${h} ${plural(h,'hodina','hodiny','hodin')}</option>`).join('');
 async function init() {
   try {
