@@ -4,7 +4,7 @@ Samostatná služba pro lokální ovládání a správu chytrých modulů v Hanz
 
 Web zachovává styl stávajícího HanzHubu: tmavé pozadí s barevnými přechody, průsvitné karty, logo HanzHub a zelené akce. Ovládání infrapanelu má velkou cílovou teplotu s kruhovým ukazatelem, aktuální teplotu, tlačítka ±, posuvník, zapnutí, dětský zámek a časovač. Funguje na počítači i telefonu.
 
-**Verze 1.1.0:** přidává lokální ovládání zásuvky **TP-Link Tapo P110M** přes `python-kasa`, aktuální příkon ve W a spotřebu za den a měsíc v kWh. Zachovává oranžovou ikonu a kompaktní hlavičku z verze 1.0.1.
+**Verze 1.1.1:** po síťové chybě dohledá Tuya modul podle jeho uloženého ID a ověří stav na nové IP. Tím pokrývá změnu DHCP adresy po odpojení od napájení. Zachovává podporu **TP-Link Tapo P110M** z verze 1.1.0, aktuální příkon ve W, spotřebu za den a měsíc v kWh, oranžovou ikonu a kompaktní hlavičku.
 
 Součástí je správa modulů: přidání ze souboru TinyTuya nebo ručně, pojmenování, místnost, úprava IP a protokolu, obnova klíče či účtu, pozastavení a odebrání. Podporován je infrapanel **BOT SMART IPH2**, obecný **spínač / zásuvka Tuya** s nastavitelným boolean DP zapnutí a **TP-Link Tapo P110M**. Další typy lze doplnit ovladačem; automatický univerzální ovladač pro všechny IoT výrobky není součástí této verze.
 
@@ -104,6 +104,7 @@ docker compose restart hanzhub_iot
 - **Načíst z TinyTuya:** obnoví ID a klíče známých modulů podle ID/MAC a přidá rozpoznaný BOT panel. Ostatní zařízení zůstanou nabídkou pro ruční výběr typu. Přejmenování, místnost a ručně nastavenou IP zachová.
 - **Přidat modul → TP-Link Tapo P110M:** vyplň IP a účet Tapo. HanzHub zásuvku lokálně rozpozná, ověří přihlášení a uloží její skutečné ID/MAC. Při přidávání ji nezapíná ani nevypíná. Úprava názvu nebo IP s prázdným e-mailem i heslem zachová uložený účet; pro změnu účtu vyplň obě pole.
 - **Po novém párování:** zařízení může dostat nové ID i klíč. Na HUBu spusť wizard, obnov mount souboru a ve správě klikni na Načíst z TinyTuya. Zkontroluj také IP zařízení.
+- **Po vypnutí napájení / změně DHCP IP:** u Tuya modulů po chybě spojení služba hledá stejné ID v lokálních UDP oznámeních nejvýše jednou za 60 sekund na modul, po dobu nejvýše 5 sekund. Novou LAN IPv4 adresu uloží až po úspěšném čtení stavu se stávajícím klíčem a protokolem. ID, klíč, názvy a nastavení nemění. Příkazy při chybě automaticky neopakuje; pravidelné čtení obnoví dostupnost a další příkaz pak zadáš sám. U Tapo je zatím při změně IP potřeba adresu upravit ručně.
 
 ```bash
 cd /opt/infrapanel
@@ -113,6 +114,37 @@ docker compose up -d --force-recreate hanzhub_iot
 ```
 
 Rekonstrukce kontejneru po wizardu pokryje i případ, kdy byl `devices.json` nahrazen novým souborem. Klíč pak obnov tlačítkem ve správě.
+
+### Panel se po zapnutí nevrací do HanzHubu
+
+TinyTuya **905** znamená nedostupné zařízení; samotná chyba nepotvrzuje změnu IP ani ztracené párování. Viz [chybové kódy TinyTuya](https://github.com/jasonacox/tinytuya/blob/master/API.md#error-codes).
+
+1. Ověř, že běží LTE Share s DHCP na `Ethernet 7`, Zyxel a Wi-Fi HanzHub. Panel musí být připojený do stejné LAN jako HUB.
+2. V LTE Share klikni **Hledat zařízení** a najdi MAC panelu `FC-3C-D7-4C-A2-DC`. Pokud má jinou IP, můžeš ji rovnou zadat ve **Správa modulů → Upravit**. Ve verzi 1.1.1 se také dohledává automaticky při čtení stavu.
+3. Klikni **Obnovit**. Pokud se panel teprve připojuje k Wi-Fi, další discovery může proběhnout za 60 sekund. Pokud není ani v DHCP seznamu / Tuya aplikaci, je potřeba nejprve obnovit síťové připojení; aktualizace IoT tento výpadek neopraví.
+4. Jestli IP zůstává stejná, zavři otevřené ovládání panelu v telefonu a spusť tento výhradně čtecí test na HUBu. Vypíše stav nebo číselný kód, nikoli lokální klíč:
+
+   ```bash
+   /opt/infrapanel/.venv/bin/python - <<'PY'
+   import json
+   from pathlib import Path
+   import tinytuya
+   panel = next(d for d in json.loads(Path('/opt/infrapanel/devices.json').read_text())
+                if d.get('mac', '').lower() == 'fc:3c:d7:4c:a2:dc')
+   found = tinytuya.find_device(dev_id=panel['id'])
+   print('Nalezená IP:', found.get('ip'))
+   if found.get('ip'):
+       device = tinytuya.Device(panel['id'], found['ip'], panel['key'], version=3.4)
+       device.set_socketTimeout(3)
+       device.set_socketRetryLimit(2)
+       device.set_socketRetryDelay(1)
+       result = device.status()
+       print('Stav DP:', result.get('dps') if isinstance(result, dict) else None)
+       print('Kód chyby:', result.get('Err') if isinstance(result, dict) else 'neplatná odpověď')
+   PY
+   ```
+
+UDP discovery musí procházet mezi Wi-Fi a LAN; izolace klientů, jiná síť nebo vypnutý DHCP mohou bránit návratu zařízení. Rezervaci IP nastavuj na aktivním DHCP serveru LTE Share, pokud ji podporuje; Zyxel má v tomto zapojení DHCP vypnuté. Běžné odpojení napájení není důvodem k mazání modulu, DHCP dat nebo novému wizardu.
 
 `ON` znamená zapnutý panel. Z dostupných DP nelze spolehlivě odvodit, zda právě odebírá výkon a topí. Aplikace tento údaj nevymýšlí. Stav Nedostupný je odlišný od Vypnuto. Při spuštění, importu nebo pravidelném čtení se žádný příkaz k zapnutí automaticky neposílá.
 
@@ -216,7 +248,7 @@ sh -n install.sh update.sh
 docker compose config --quiet
 ```
 
-Testy pokrývají mapování DP, rozsahy a typy, potvrzování zápisu, timer, poruchy, výpadek, registr a obnovu klíče po párování, serializaci příkazů, HTTP API, skrytí klíčů a účtů, LCD i opakované napojení dashboardu. Tapo testy ověřují čtení a potvrzené přepnutí, zaměněnou zásuvku na stejné IP, chyby autentizace, obnovu účtu a migraci původní databáze. Ověřují také jednotky přímo na Energy modulu připnuté knihovny. Používají výslovně testovací transport a žádné skutečné zařízení nezapínají. GitHub Actions tyto kontroly spouští při pushi i PR.
+Testy pokrývají mapování DP, rozsahy a typy, potvrzování zápisu, timer, poruchy, výpadek, registr a obnovu klíče po párování, serializaci příkazů, HTTP API, skrytí klíčů a účtů, LCD i opakované napojení dashboardu. Testují také návrat Tuya modulu na jiné DHCP IP, potvrzení adresy čtením, trvalé uložení, omezení discovery, odmítnutí cizího ID / veřejné IP a zákaz automatického opakování příkazu. Tapo testy ověřují čtení a potvrzené přepnutí, zaměněnou zásuvku na stejné IP, chyby autentizace, obnovu účtu a migraci původní databáze. Ověřují také jednotky přímo na Energy modulu připnuté knihovny. Používají výslovně testovací transport a žádné skutečné zařízení nezapínají. GitHub Actions tyto kontroly spouští při pushi i PR.
 
 Ve verzi 1.1.0 prošlo 45 automatických testů a kontrola syntaxe Python/JavaScript/shell. V prostředí přípravy nebyl Docker ani přístup k framebufferu Raspberry; sestavení ARM kontejneru, skutečné LCD a ovládání fyzické zásuvky je nutné ověřit na HUBu. Cloudový prohlížeč zde nepovolil přístup k lokálnímu portu pro vizuální ověření webu.
 

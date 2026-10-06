@@ -317,6 +317,29 @@ class IoTManager:
                 skipped += 1
         return {"added": added, "updated": updated, "skipped": skipped}
 
+    def _tuya_state(self, module):
+        try:
+            state = self.adapter.status(module)
+        except IoTError as error:
+            if error.code != "device_unavailable":
+                raise
+            address = self.adapter.discover(module)
+            if not address:
+                raise
+            try:
+                address = local_address(address)
+            except IoTError:
+                raise error from None
+            # ID, klíč a protokol zůstávají stejné. Nejprve ověříme čtení na nové IP.
+            state = self.adapter.status({**module, "ip": address})
+            if address != module["ip"]:
+                with self._db() as db:
+                    db.execute("UPDATE modules SET ip = ?, updated_at = ? WHERE id = ?",
+                               (address, utc_now(), module["id"]))
+                module["ip"] = address
+        state["ip"] = module["ip"]
+        return state
+
     def state(self, module_id, fresh=False):
         module = self._module(module_id)
         if not module["enabled"]:
@@ -334,8 +357,8 @@ class IoTManager:
                 if cached and not fresh and time.monotonic() - cached[0] < self.cache_seconds:
                     return dict(cached[1])
             try:
-                adapter = self.tapo_adapter if module["driver"] == "tapo_p110m" else self.adapter
-                state = adapter.status(module)
+                state = (self.tapo_adapter.status(module) if module["driver"] == "tapo_p110m"
+                         else self._tuya_state(module))
             except IoTError as error:
                 state = {"online": False, "error": str(error), "error_code": error.code}
             state["checked_at"] = utc_now()

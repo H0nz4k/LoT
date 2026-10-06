@@ -1,5 +1,6 @@
 """Ověřený BOT IPH2 a konfigurovatelný spínač přes lokální Tuya protokol."""
 from datetime import datetime, timezone
+import threading
 import time
 
 
@@ -64,9 +65,42 @@ def validate_command(driver, command):
 
 
 class LocalTuya:
-    def __init__(self, factory=None, sleeper=time.sleep):
+    def __init__(self, factory=None, sleeper=time.sleep, discoverer=None, clock=time.monotonic):
         self.factory = factory
         self.sleeper = sleeper
+        self.discoverer = discoverer or self._scan
+        self.clock = clock
+        self._discovery_lock = threading.Lock()
+        self._next_discovery = {}
+
+    @staticmethod
+    def _scan(device_id):
+        from tinytuya import scanner
+        # Pouze UDP discovery: žádné procházení IP rozsahů, cloud ani zápisy DP.
+        found = scanner.devices(verbose=False, scantime=5, color=False, poll=False,
+                                forcescan=False, byID=True, show_timer=False,
+                                wantids=[device_id],
+                                tuyadevices=[{"id": device_id, "name": "", "key": ""}])
+        return found.get(device_id)
+
+    def discover(self, module):
+        # Scannery sdílejí UDP porty. Další dotaz nemusí čekat na probíhající scan.
+        if not self._discovery_lock.acquire(blocking=False):
+            return None
+        try:
+            device_id, now = module["device_id"], self.clock()
+            if now < self._next_discovery.get(device_id, 0):
+                return None
+            self._next_discovery[device_id] = now + 60
+            found = self.discoverer(device_id)
+            if isinstance(found, dict) and found.get("gwId") == device_id:
+                return found.get("ip")
+            return None
+        except Exception:
+            # Výjimky knihovny mohou obsahovat privátní údaje; do API je nepředáváme.
+            return None
+        finally:
+            self._discovery_lock.release()
 
     def _connect(self, module):
         factory = self.factory
@@ -97,8 +131,15 @@ class LocalTuya:
         if isinstance(response, dict) and ("Error" in response or "Err" in response):
             code = str(response.get("Err", ""))
             suffix = f" (TinyTuya {code})" if code.isdigit() else ""
+            if code in ("901", "902", "905"):
+                raise IoTError("Zařízení na uložené IP neodpovídá" + suffix +
+                               ". Ověřte aktuální IP a připojení k Wi-Fi.", 502,
+                               "device_unavailable")
+            if code == "914":
+                raise IoTError("Ověřte lokální klíč a verzi protokolu" + suffix + ".", 502,
+                               "authentication_failed")
             raise IoTError("Modul nepotvrdil komunikaci" + suffix + ".", 502,
-                           "device_unavailable")
+                           "communication_failed")
         return response
 
     @staticmethod

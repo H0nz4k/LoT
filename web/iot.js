@@ -164,7 +164,11 @@ async function refreshStates(fresh = false) {
       const data = await api(`/devices/${module.id}/state${fresh ? '?fresh=1' : ''}`);
       if (epoch !== app.epoch) return;
       const live = app.modules.find(m => m.id === module.id && m.updated_at === module.updated_at);
-      if (live) { live.state = data.state; render(); }
+      if (live) {
+        live.state = data.state;
+        if (data.state.online && data.state.ip) live.ip = data.state.ip;
+        render();
+      }
     } catch (error) {
       if (epoch !== app.epoch) return;
       const live = app.modules.find(m => m.id === module.id && m.updated_at === module.updated_at);

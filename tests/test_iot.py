@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -221,6 +222,191 @@ class RegistryTests(ManagerFixture):
             thread.join(timeout=2)
         self.assertEqual(self.device.max_active, 1)
         self.assertEqual(self.device.calls, 3)
+
+
+class RoamingDevice(FakeDevice):
+    def __init__(self):
+        super().__init__()
+        self.live_ip = '192.168.1.102'
+        self.connected_ips = []
+        self.errors = {}
+
+    def factory(self, device_id, ip, key, version):
+        self.connected_ips.append(ip)
+        return super().factory(device_id, ip, key, version)
+
+    def status(self):
+        address = self.config[1]
+        if address in self.errors:
+            return self.errors[address]
+        if address != self.live_ip:
+            self.calls += 1
+            return {'Error':'unreachable ' + TEST_KEY, 'Err':'905', 'Payload':TEST_KEY}
+        return super().status()
+
+    def set_value(self, dp, value):
+        if self.config[1] != self.live_ip:
+            self.writes.append((dp, value))
+            return {'Error':'unreachable ' + TEST_KEY, 'Err':'905', 'Payload':TEST_KEY}
+        return super().set_value(dp, value)
+
+
+class ReconnectionTests(ManagerFixture):
+    def setUp(self):
+        super().setUp()
+        self.device = RoamingDevice()
+        self.clock = [100]
+        self.scans = []
+        self.found = {'gwId': self.module['device_id'], 'ip':'192.168.1.150'}
+        self.adapter = LocalTuya(self.device.factory, sleeper=lambda _: None,
+                                 discoverer=self.discover, clock=lambda: self.clock[0])
+        self.manager.adapter = self.adapter
+
+    def discover(self, device_id):
+        self.scans.append(device_id)
+        return self.found
+
+    def test_changed_dhcp_ip_recovers_read_only_and_persists_across_restart(self):
+        self.manager.update_module(self.id, {'name':'Můj panel', 'room':'Obývák'})
+        self.manager.command(self.id, {'control':'target_temp_c', 'value':26})
+        writes, events = list(self.device.writes), self.manager.events(self.id)
+        self.device.live_ip = '192.168.1.150'
+        state = self.manager.state(self.id, fresh=True)
+        self.assertTrue(state['online'])
+        self.assertEqual(state['ip'], self.device.live_ip)
+        self.assertEqual(self.scans, [self.module['device_id']])
+        module = self.manager.get_module(self.id)
+        self.assertEqual((module['ip'], module['name'], module['room']),
+                         (self.device.live_ip, 'Můj panel', 'Obývák'))
+        self.assertEqual(module['device_id'], self.module['device_id'])
+        self.assertEqual(module['version'], '3.4')
+        self.assertEqual(self.device.config[2], TEST_KEY)
+        self.assertEqual(self.device.writes, writes)
+        self.assertEqual(self.manager.events(self.id), events)
+        self.assertNotIn(TEST_KEY, json.dumps([state, module]))
+        restarted = IoTManager(self.base / 'data', self.source, self.adapter)
+        self.assertTrue(restarted.state(self.id)['online'])
+        self.assertEqual(self.device.connected_ips[-1], self.device.live_ip)
+        self.assertEqual(len(self.scans), 1)
+
+    def test_unavailable_device_is_unknown_and_scan_is_rate_limited(self):
+        self.device.live_ip = '192.168.1.150'
+        self.found = None
+        for _ in range(3):
+            state = self.manager.state(self.id, fresh=True)
+            self.assertFalse(state['online'])
+            self.assertNotIn('power', state)
+            self.assertNotIn(TEST_KEY, json.dumps(state))
+        self.assertEqual(len(self.scans), 1)
+        self.assertEqual(self.manager.get_module(self.id)['ip'], '192.168.1.102')
+        self.clock[0] += 61
+        self.found = {'gwId':self.module['device_id'], 'ip':self.device.live_ip}
+        self.assertTrue(self.manager.state(self.id, fresh=True)['online'])
+        self.assertEqual(len(self.scans), 2)
+
+    def test_foreign_id_public_ip_and_invalid_status_never_replace_address(self):
+        self.device.live_ip = '192.168.1.150'
+        cases = [({'gwId':'another-device', 'ip':self.device.live_ip}, False),
+                 ({'gwId':self.module['device_id'], 'ip':'37.48.27.210'}, False),
+                 ({'gwId':self.module['device_id'], 'ip':'not-an-ip'}, False),
+                 ({'gwId':self.module['device_id'], 'ip':self.device.live_ip}, True)]
+        for found, invalid_status in cases:
+            with self.subTest(found=found):
+                self.clock[0] += 61
+                self.found = found
+                self.device.errors = {self.device.live_ip:{'dps':{}}} if invalid_status else {}
+                self.device.connected_ips.clear()
+                self.assertFalse(self.manager.state(self.id, fresh=True)['online'])
+                self.assertEqual(self.manager.get_module(self.id)['ip'], '192.168.1.102')
+                if not invalid_status:
+                    self.assertEqual(self.device.connected_ips, ['192.168.1.102'])
+        self.assertEqual(self.device.writes, [])
+
+    def test_key_error_does_not_trigger_discovery(self):
+        self.device.errors['192.168.1.102'] = {'Error':'secret ' + TEST_KEY, 'Err':'914'}
+        state = self.manager.state(self.id, fresh=True)
+        self.assertEqual(state['error_code'], 'authentication_failed')
+        self.assertEqual(self.scans, [])
+        self.assertNotIn(TEST_KEY, json.dumps(state))
+
+    def test_failed_command_is_never_replayed_by_reconnection(self):
+        self.device.live_ip = '192.168.1.150'
+        with self.assertRaises(IoTError):
+            self.manager.command(self.id, {'control':'target_temp_c', 'value':28})
+        self.assertEqual(self.device.writes, [(3, 28)])
+        self.assertEqual(self.scans, [])
+        self.assertFalse(self.manager.events(self.id)[0]['ok'])
+        self.assertTrue(self.manager.state(self.id, fresh=True)['online'])
+        self.assertEqual(self.device.writes, [(3, 28)])
+        self.assertEqual(self.device.dps['3'], 26)
+        self.manager.command(self.id, {'control':'target_temp_c', 'value':28})
+        self.assertEqual(self.device.writes, [(3, 28), (3, 28)])
+        self.assertEqual(self.device.connected_ips[-1], self.device.live_ip)
+        self.assertTrue(self.manager.events(self.id)[0]['ok'])
+
+    def test_healthy_and_paused_devices_do_not_scan(self):
+        self.assertTrue(self.manager.state(self.id, fresh=True)['online'])
+        self.manager.update_module(self.id, {'enabled':False})
+        self.device.live_ip = '192.168.1.150'
+        self.assertTrue(self.manager.state(self.id, fresh=True)['paused'])
+        self.assertEqual(self.scans, [])
+
+    def test_discovery_exception_is_redacted_and_does_not_change_address(self):
+        self.device.live_ip = '192.168.1.150'
+        with patch.object(self.adapter, 'discoverer', side_effect=RuntimeError(TEST_KEY)):
+            state = self.manager.state(self.id, fresh=True)
+        self.assertFalse(state['online'])
+        self.assertNotIn(TEST_KEY, json.dumps(state))
+        self.assertEqual(self.manager.get_module(self.id)['ip'], '192.168.1.102')
+
+    def test_same_ip_can_recover_without_changing_registration(self):
+        self.device.live_ip = '192.168.1.102'
+        self.found = {'gwId':self.module['device_id'], 'ip':self.device.live_ip}
+        original_status = self.device.status
+        failures = [True]
+        def fail_once():
+            if failures:
+                failures.pop()
+                return {'Error':'unreachable', 'Err':'905'}
+            return original_status()
+        with patch.object(self.device, 'status', side_effect=fail_once):
+            self.assertTrue(self.manager.state(self.id, fresh=True)['online'])
+        self.assertEqual(self.manager.get_module(self.id)['updated_at'], self.module['updated_at'])
+        self.assertEqual(self.device.writes, [])
+
+
+class DiscoveryContractTests(unittest.TestCase):
+    def test_installed_tinytuya_scanner_is_read_only_bounded_and_matches_id(self):
+        import inspect
+        from tinytuya import scanner
+        result = {'gwId':'fixture', 'ip':'192.168.1.150', 'version':'3.4'}
+        with patch.object(scanner, 'devices', return_value={'fixture':result}) as scan:
+            self.assertEqual(LocalTuya._scan('fixture'), result)
+        options = scan.call_args.kwargs
+        inspect.signature(scanner.devices).bind(**options)
+        self.assertFalse(options['poll'])
+        self.assertFalse(options['forcescan'])
+        self.assertEqual(options['scantime'], 5)
+        self.assertEqual(options['wantids'], ['fixture'])
+        self.assertEqual(options['tuyadevices'][0]['key'], '')
+
+    def test_parallel_discoveries_do_not_contend_for_udp_ports(self):
+        started, release = threading.Event(), threading.Event()
+        def scan(device_id):
+            started.set()
+            release.wait(timeout=2)
+            return {'gwId':device_id, 'ip':'192.168.1.150'}
+        adapter = LocalTuya(discoverer=scan)
+        result = []
+        thread = threading.Thread(target=lambda: result.append(adapter.discover({'device_id':'first'})))
+        thread.start()
+        try:
+            self.assertTrue(started.wait(timeout=1))
+            self.assertIsNone(adapter.discover({'device_id':'second'}))
+        finally:
+            release.set()
+            thread.join(timeout=2)
+        self.assertEqual(result, ['192.168.1.150'])
 
 
 class HTTPTests(ManagerFixture):
