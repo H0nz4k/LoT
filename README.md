@@ -253,3 +253,9 @@ Testy pokrývají mapování DP, rozsahy a typy, potvrzování zápisu, timer, p
 Ve verzi 1.1.0 prošlo 45 automatických testů a kontrola syntaxe Python/JavaScript/shell. V prostředí přípravy nebyl Docker ani přístup k framebufferu Raspberry; sestavení ARM kontejneru, skutečné LCD a ovládání fyzické zásuvky je nutné ověřit na HUBu. Cloudový prohlížeč zde nepovolil přístup k lokálnímu portu pro vizuální ověření webu.
 
 Zdroje: [TinyTuya](https://github.com/jasonacox/tinytuya), [potvrzený Tuya thing model endpoint](https://developer.tuya.com/en/docs/cloud/bd68171262?id=Kcp4utbhzzfgo), [původní HanzHub Dashboard](https://github.com/H0nz4k/Dashboard).
+
+## SONOFF S60TPF
+
+Integrace původní Wi-Fi zásuvky přes oficiální eWeLink OAuth v2 je popsána
+v [návodu SONOFF](docs/sonoff-s60tpf.md). Vyžaduje vlastní OAuth aplikaci a
+soukromě uložený token; neověřené měření zůstává nedostupné.
