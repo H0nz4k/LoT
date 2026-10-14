@@ -12,6 +12,11 @@ class IoTError(Exception):
 
 
 DRIVERS = {
+    "sonoff_s60tpf": {
+        "name": "SONOFF S60TPF · eWeLink cloud",
+        "kind": "plug", "controls": ["power"], "energy": True,
+        "connection": "cloud",
+    },
     "bot_iph2": {
         "name": "Infrapanel BOT IPH2",
         "kind": "heater",
