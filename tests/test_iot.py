@@ -448,6 +448,21 @@ class HTTPTests(ManagerFixture):
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(payload)['state']['target_temp_c'], 28)
 
+    def test_presence_scene_inventory_and_confirmed_boolean_power_contract(self):
+        code, payload = self.request('/api/iot/devices')
+        self.assertEqual(code, 200)
+        module = next(row for row in json.loads(payload)['devices'] if row['id']==self.id)
+        self.assertIs(module['enabled'], True)
+        self.assertIn('power', module['capabilities']['controls'])
+        for power in (False, True):
+            code, payload = self.request(f'/api/iot/devices/{self.id}/command', 'POST',
+                                         {'control':'power', 'value':power})
+            self.assertEqual(code, 200)
+            result = json.loads(payload)
+            self.assertIs(result['ok'], True)
+            self.assertIs(result['state']['online'], True)
+            self.assertIs(result['state']['power'], power)
+
     def test_private_files_not_served(self):
         for path in ['/devices.json', '/modules.sqlite3', '/iot/server.py', '/.env', '/../../devices.json']:
             with self.subTest(path=path):
