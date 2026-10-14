@@ -259,3 +259,11 @@ Zdroje: [TinyTuya](https://github.com/jasonacox/tinytuya), [potvrzený Tuya thin
 Integrace původní Wi-Fi zásuvky přes oficiální eWeLink OAuth v2 je popsána
 v [návodu SONOFF](docs/sonoff-s60tpf.md). Vyžaduje vlastní OAuth aplikaci a
 soukromě uložený token; neověřené měření zůstává nedostupné.
+
+## Integrace Příchod / Odchod
+
+Centrální konfiguraci, persistovaný poslední režim a deduplikaci požadavků spravuje [HanzHub Dashboard](https://github.com/H0nz4k/Dashboard). InfoLCD čte `GET /api/presence/state` a explicitním dotykem posílá `POST /api/presence/run`. Renderování ani načtení stavu zařízení nezapíná.
+
+Dashboard vybírá moduly z `GET /api/iot/devices`: stabilní 12místné ID, `enabled: true` a `capabilities.controls` obsahující `power`. Akce používá existující `POST /api/iot/devices/{id}/command` s JSON `{"control":"power","value":true}` pro Příchod a `false` pro Odchod. Potvrzení vyžaduje `ok: true`, `state.online: true` a odpovídající boolean `state.power`. Odebrané/zakázané zařízení nesmí být nahrazeno jiným modulem. Částečné selhání zůstává v centrálním stavu; po timeoutu se příkaz automaticky neopakuje.
+
+LoT API zůstává kompatibilní, bez další kopie scénového stavu. Regresní HTTP test `test_presence_scene_inventory_and_confirmed_boolean_power_contract` ověřuje přesný kontrakt výběru a obou přepnutí bez fyzického zařízení.
