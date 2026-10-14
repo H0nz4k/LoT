@@ -262,3 +262,8 @@ Centrální konfiguraci, persistovaný poslední režim a deduplikaci požadavk�
 Dashboard vybírá moduly z `GET /api/iot/devices`: stabilní 12místné ID, `enabled: true` a `capabilities.controls` obsahující `power`. Akce používá existující `POST /api/iot/devices/{id}/command` s JSON `{"control":"power","value":true}` pro Příchod a `false` pro Odchod. Potvrzení vyžaduje `ok: true`, `state.online: true` a odpovídající boolean `state.power`. Odebrané/zakázané zařízení nesmí být nahrazeno jiným modulem. Částečné selhání zůstává v centrálním stavu; po timeoutu se příkaz automaticky neopakuje.
 
 LoT API zůstává kompatibilní, bez další kopie scénového stavu. Regresní HTTP test `test_presence_scene_inventory_and_confirmed_boolean_power_contract` ověřuje přesný kontrakt výběru a obou přepnutí bez fyzického zařízení.
+
+
+### Oprávnění vstupní stránky dashboardu
+
+Integrace nastavuje veřejným souborům iot.html a icons/iot.svg oprávnění 0644 i při opakované instalaci. Tím opravuje starší soubory vytvořené s režimem 0600, které nginx nemohl přečíst (403 Forbidden).
