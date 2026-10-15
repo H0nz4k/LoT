@@ -16,6 +16,7 @@ import urllib.request
 
 from iot import IoTManager, PRIVATE_NETWORKS
 from iot_driver import DRIVERS, IoTError
+from access import RemoteAccess, remote_route_allowed
 
 WEB_DIR = Path(os.environ.get("HANZHUB_IOT_WEB_DIR", Path(__file__).resolve().parent.parent / "web"))
 ASSETS = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -37,23 +38,36 @@ def internal_ip(value):
         return False
 
 
-def allowed_request(handler):
+def request_access(handler):
     peer = handler.client_address[0]
     if not internal_ip(peer):
-        return False
+        return None
+    access = handler.server.remote_access
+    token = handler.headers.get("Cf-Access-Jwt-Assertion")
     # Pouze místní reverse proxy smí předat původní adresu klienta.
     forwarded = handler.headers.get("CF-Connecting-IP") or handler.headers.get("X-Forwarded-For")
-    if forwarded and not internal_ip(forwarded.split(",")[0].strip()):
-        return False
+    remote = bool(token or (forwarded and not internal_ip(forwarded.split(",")[0].strip()))
+                  or (access.origin and handler.headers.get("Host") == urlsplit(access.origin).netloc))
     origin = handler.headers.get("Origin")
     if origin:
         try:
             parsed = urlsplit(origin)
         except ValueError:
-            return False
+            return None
         if parsed.scheme not in ("http", "https") or parsed.netloc != handler.headers.get("Host", ""):
-            return False
-    return True
+            return None
+        if remote and origin != access.origin:
+            return None
+    if remote:
+        # Do not fall back to LAN if a forwarded identity/token is invalid.
+        if not access.enabled or handler.headers.get("Host") != urlsplit(access.origin).netloc:
+            return None
+        return "remote" if access.verify(token) else None
+    return "lan"
+
+
+def allowed_request(handler):
+    return request_access(handler) is not None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -88,11 +102,13 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         if method == "GET" and path == "/api/iot/info":
             self._json({"dashboard_url": os.environ.get("HANZHUB_DASHBOARD_URL", "http://192.168.1.3:4001"),
-                        "service": "hanzhub_iot"})
+                        "service": "hanzhub_iot", "access": self.access_mode,
+                        "can_manage": self.access_mode == "lan"})
         elif method == "GET" and path == "/api/iot/health":
             self._json({"ok": True, "service": "hanzhub_iot", "port": self.server.server_port})
         elif method == "GET" and path == "/api/iot/devices":
-            self._json({"devices": manager.list_modules(), "drivers": DRIVERS})
+            self._json({"devices": manager.list_modules(), "drivers": DRIVERS,
+                        "access": self.access_mode, "can_manage": self.access_mode == "lan"})
         elif method == "GET" and path == "/api/iot/candidates":
             self._json({"candidates": manager.candidates()})
         elif method == "GET" and path == "/api/iot/panel":
@@ -143,9 +159,14 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        if not allowed_request(self):
-            self._json({"error": "Ovládání a správa IoT jsou dostupné z domácí sítě.",
-                        "code": "lan_only"}, 403)
+        self.access_mode = request_access(self)
+        if self.access_mode is None:
+            self._json({"error": "Připoj se z domácí sítě nebo se přihlas přes Cloudflare Access. Vzdálené ovládání musí být povolené na serveru.",
+                        "code": "access_required" if self.server.remote_access.enabled else "lan_only"}, 403)
+            return
+        if self.access_mode == "remote" and not remote_route_allowed(method, path.rstrip("/")):
+            self._json({"error": "Správa modulů je dostupná pouze z domácí sítě. Ovládání zařízení je povolené.",
+                        "code": "management_lan_only"}, 403)
             return
         try:
             self._route_api(method)
@@ -212,10 +233,11 @@ def register_dashboard():
     print("Automatické přidání IoT karty se nepodařilo. Použijte instalaci integrace dashboardu.", flush=True)
 
 
-def make_server(host="0.0.0.0", port=4011, manager=None):
+def make_server(host="0.0.0.0", port=4011, manager=None, remote_access=None):
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     server.manager = manager or IoTManager()
+    server.remote_access = remote_access if remote_access is not None else RemoteAccess.from_env()
     return server
 
 

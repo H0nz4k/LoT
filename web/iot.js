@@ -3,7 +3,7 @@
 const $ = id => document.getElementById(id);
 const app = {modules: [], selected: null, busy: false, loading: false, epoch: 0,
   pendingTemp: null, tempTimer: null, editing: null, candidates: [], dialogModule: null,
-  formBusy: false, controllerId: null, toastTimer: null};
+  formBusy: false, controllerId: null, toastTimer: null, canManage: false, accessMode: null};
 try { app.selected = localStorage.getItem('hanzhub-iot-selected'); } catch (_) {}
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => `<svg aria-hidden="true"><use href="#icon-${name}"/></svg>`;
@@ -83,11 +83,12 @@ function updateController() {
   if (!m) {
     app.controllerId = null;
     $('controller').classList.remove('is-on', 'is-plug');
-    $('controller').innerHTML = `<div class="empty"><span class="empty-icon">${icon('grid')}</span><strong>Začni prvním modulem</strong><p>Přidej zařízení a ovládej jej z HanzHubu.</p><button class="btn btn-primary" data-action="add">+ Přidat modul</button></div>`;
+    $('controller').innerHTML = `<div class="empty"><span class="empty-icon">${icon('grid')}</span><strong>${app.canManage ? 'Začni prvním modulem' : 'Žádné zařízení k ovládání'}</strong><p>${app.canManage ? 'Přidej zařízení a ovládej jej z HanzHubu.' : 'Přidání a správa zařízení jsou dostupné z domácí sítě.'}</p>${app.canManage ? '<button class="btn btn-primary" data-action="add">+ Přidat modul</button>' : ''}</div>`;
     return;
   }
   const templateId = `${m.id}:${m.driver}`;
   if (app.controllerId !== templateId) { $('controller').innerHTML = controllerMarkup(m); app.controllerId = templateId; }
+  $('controller').querySelector('[data-action="edit"]').hidden = !app.canManage;
   const s = m.state, online = !!(m.enabled && s?.online), ready = online && !app.busy;
   const target = online ? app.pendingTemp ?? s.target_temp_c : null;
   $('deviceName').textContent = m.name;
@@ -131,7 +132,14 @@ function updateController() {
   $('lastObserved').textContent = s?.checked_at ? `Poslední načtení ${timeLabel(s.checked_at)}` : 'Čekám na stav…';
   $('controller').querySelectorAll('[data-action="edit"],[data-action="refresh"]').forEach(b => { b.disabled = app.busy; });
 }
-function render() { summary(); renderList(); renderManagement(); updateController(); }
+function applyPermissions() {
+  for (const id of ['manageTab', 'addBtn', 'importBtn']) $(id).hidden = !app.canManage;
+  if (!app.canManage) changeView(false);
+  const label = document.getElementById('accessMode');
+  if (label) label.textContent = app.accessMode === 'remote'
+    ? 'Vzdálené ovládání přes Cloudflare Access' : 'Lokální ovládání přes HanzHub';
+}
+function render() { summary(); renderList(); renderManagement(); updateController(); applyPermissions(); }
 function clearPending() { clearTimeout(app.tempTimer); app.tempTimer = null; app.pendingTemp = null; }
 function selectModule(id) {
   if (app.busy) return;
@@ -144,6 +152,10 @@ async function loadModules() {
   app.loading = true;
   try {
     const data = await api('/devices');
+    if (typeof data.can_manage === 'boolean') {
+      app.canManage = data.can_manage;
+      app.accessMode = data.access;
+    }
     const old = new Map(app.modules.map(m => [m.id, m]));
     app.modules = data.devices.map(m => {
       const previous = old.get(m.id);
@@ -152,7 +164,7 @@ async function loadModules() {
     if (!current()) app.selected = app.modules[0]?.id ?? null;
     showError('pageError', ''); render(); loadEvents();
   } catch (error) {
-    showError('pageError', error.code === 'lan_only' ? error.message : 'IoT služba není dostupná. Zkontroluj, že běží na HanzHubu.');
+    showError('pageError', ['lan_only','access_required','management_lan_only'].includes(error.code) ? error.message : 'IoT služba není dostupná. Zkontroluj přihlášení a spojení s HanzHubem.');
     $('summary').textContent = 'Spojení se službou není dostupné';
   } finally { app.loading = false; }
 }
@@ -216,6 +228,7 @@ function queueTemperature(value) {
 }
 
 function changeView(manage) {
+  if (manage && !app.canManage) return;
   $('controlView').hidden = manage; $('manageView').hidden = !manage;
   $('controlTab').setAttribute('aria-selected', String(!manage));
   $('manageTab').setAttribute('aria-selected', String(manage));
@@ -240,7 +253,7 @@ function updateFormFields() {
   $('powerDpLabel').hidden = form.elements.driver.value !== 'tuya_switch';
 }
 async function openModule(id = null) {
-  if (app.busy || app.formBusy) return;
+  if (!app.canManage || app.busy || app.formBusy) return;
   clearPending(); updateController();
   const form = $('moduleForm'); form.reset(); form.elements.driver.disabled = false;
   app.editing = id; app.candidates = [];
@@ -324,6 +337,7 @@ async function submitTimer(event) {
   $('saveTimerBtn').disabled = false;
 }
 function openDelete(id) {
+  if (!app.canManage) return;
   if (app.busy || app.formBusy) return;
   clearPending(); updateController();
   const m = app.modules.find(m => m.id === id); if (!m) return;
@@ -385,7 +399,7 @@ $('moduleForm').addEventListener('submit', submitModule);
 $('timerForm').addEventListener('submit', submitTimer);
 $('deleteForm').addEventListener('submit', submitDelete);
 $('importBtn').addEventListener('click', async () => {
-  if (app.busy || app.formBusy) return;
+  if (!app.canManage || app.busy || app.formBusy) return;
   $('importBtn').disabled = true;
   try {
     const result = await api('/import', jsonRequest('POST', {})); app.epoch++;
@@ -404,6 +418,9 @@ $('timerHours').innerHTML = Array.from({length:25}, (_, h) => `<option value="${
 async function init() {
   try {
     const result = await api('/info');
+    app.canManage = result.can_manage !== false;
+    app.accessMode = result.access || 'lan';
+    applyPermissions();
     document.querySelectorAll('[data-dashboard]').forEach(a => { a.href = result.dashboard_url; });
   } catch (_) {}
   try {

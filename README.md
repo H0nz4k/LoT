@@ -1,6 +1,6 @@
 # HanzHub IoT
 
-Samostatná služba pro lokální ovládání a správu chytrých modulů v HanzHubu. Běží na Raspberry Pi jako kontejner `hanzhub_iot`, výchozí port je **4011**. Repo se jmenuje **LoT**, aplikace používá název **IoT moduly**.
+Samostatná služba pro ovládání chytrých modulů v HanzHubu. Správa zůstává lokální; ovládání lze volitelně zpřístupnit přes ověřené Cloudflare Access přihlášení. Běží na Raspberry Pi jako kontejner `hanzhub_iot`, výchozí port je **4011**. Repo se jmenuje **LoT**, aplikace používá název **IoT moduly**.
 
 Web zachovává styl stávajícího HanzHubu: tmavé pozadí s barevnými přechody, průsvitné karty, logo HanzHub a zelené akce. Ovládání infrapanelu má velkou cílovou teplotu s kruhovým ukazatelem, aktuální teplotu, tlačítka ±, posuvník, zapnutí, dětský zámek a časovač. Funguje na počítači i telefonu.
 
@@ -267,3 +267,58 @@ LoT API zůstává kompatibilní, bez další kopie scénového stavu. Regresní
 ### Oprávnění vstupní stránky dashboardu
 
 Integrace nastavuje veřejným souborům iot.html a icons/iot.svg oprávnění 0644 i při opakované instalaci. Tím opravuje starší soubory vytvořené s režimem 0600, které nginx nemohl přečíst (403 Forbidden).
+
+
+## Vzdálené ovládání topení přes Cloudflare Access
+
+Po nastavení a nasazení můžeš na veřejné IoT adrese zapnout nebo vypnout topení, změnit požadovanou teplotu a použít jeho stávající časovač či zámek. Příkaz běží na HUBu vůči zařízení v domácí síti a UI ukazuje až stav potvrzený zařízením. Načtení stránky, přihlášení ani opětovné připojení žádný příkaz nevydává. Tato změna sama nezapíná topení.
+
+Vzdálený přístup je ve výchozím stavu vypnutý. Server přijímá vzdálené ovládání pouze přes nakonfigurovanou HTTPS adresu a po ověření Cloudflare Access aplikačního JWT z hlavičky `Cf-Access-Jwt-Assertion`. Ověřuje podpis RS256 proti veřejným klíčům předem nastaveného týmu, vydavatele `iss`, audience konkrétní aplikace `aud`, čas vydání a expiraci a přítomnost uživatelské identity. Samotné hlavičky s e-mailem nebo IP adresou nestačí. Tokeny jiné aplikace, neplatné nebo expirované tokeny a nedostupné veřejné klíče přístup nepovolí. Klíče se krátce ukládají do cache. URL pro klíče se nikdy nepřebírá z neověřeného tokenu.
+
+Zdroj postupu ověřování: [Cloudflare – Validate JWTs](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/), [PyJWT API](https://pyjwt.readthedocs.io/en/latest/api.html).
+
+### Nastavení na serveru
+
+V Cloudflare Zero Trust otevři Access aplikaci chránící veřejný IoT hostname a zjisti její **Application Audience (AUD)**. Zjisti také doménu svého Access týmu ve tvaru `nazev-tymu.cloudflareaccess.com`. Nejde o heslo ani API token. U aplikace nastav Allow politiku pouze pro požadované uživatele (například vlastní e-mail nebo skupinu adminů), bez Bypass politiky na IoT API. Aplikace musí chránit celý hostname včetně `/api/iot/*`. Pro obecné uživatele této Access aplikace budou po nasazení dostupná ovládací API; volitelný seznam e-mailů níže to může dále omezit.
+
+Do **existujícího** `.env` v adresáři běžící IoT služby doplň skutečné hodnoty:
+
+```dotenv
+HANZHUB_ACCESS_TEAM_DOMAIN=nazev-tymu.cloudflareaccess.com
+HANZHUB_ACCESS_AUD=AUD_Z_IOT_ACCESS_APLIKACE
+HANZHUB_ACCESS_ORIGIN=https://iot.hanzhub.cz
+# Volitelně omezit na konkrétní e-maily z ověřeného JWT:
+HANZHUB_ACCESS_ALLOWED_EMAILS=
+```
+
+Nevkládej sem `CF_Authorization` cookie, uživatelský JWT, Cloudflare API token ani klíče zařízení. Tyto údaje nejsou potřeba. Skutečné přístupové údaje a lokální `.env` nepatří do Gitu.
+
+Vzdálené ovládání musí být zapnuté úplnou platnou konfigurací. Bez domény týmu, AUD nebo HTTPS originu zůstane původní omezení na LAN. Origin zadej bez cesty, například `https://iot.hanzhub.cz`; Tunnel musí zachovat tento Host. Cloudflared musí směrovat celý IoT hostname včetně API na port 4011. Server požaduje, aby připojení přicházelo z lokální sítě/loopback, a přesto samostatně ověřuje podepsaný Access token. Veřejný port 4011 není potřeba otevírat. Hlavičky `CF-Connecting-IP`/`X-Forwarded-For` slouží k odmítnutí neoprávněného požadavku; samy o sobě vzdálený přístup nepovolují. Vzdálený požadavek na nakonfigurovaný veřejný Host vyžaduje JWT i bez předané IP.
+
+### Aktualizace a ověření
+
+Zazálohuj aktuální `.env`, databázový volume a místní úpravy. Aktualizuj kód na tuto revizi běžným postupem pro tento repozitář a v adresáři **IoT Compose projektu** spusť:
+
+```bash
+docker compose up -d --build --no-deps hanzhub_iot
+```
+
+Přestavění je nutné kvůli nové knihovně PyJWT a backendu. Compose nyní předává nové proměnné z `.env` do kontejneru; pouhé doplnění do `.env` bez obnovení kontejneru nestačí. Kontejner ostatních aplikací ani uložené moduly se touto aktualizací nemění. Samotná aktualizace dashboardu tento problém neřeší.
+
+Na mobilních datech otevři veřejnou IoT adresu, přihlas se svým povoleným účtem a zkontroluj seznam a skutečný stav topení. V patičce seznamu se zobrazí „Vzdálené ovládání přes Cloudflare Access“. Teprve vlastním kliknutím vydej požadovaný příkaz a ověř jeho potvrzení. Při expiraci přihlášení se API odmítne, ovládání nedostupného stavu se zakáže a příkaz se automaticky neopakuje. Obnov stránku a znovu se přihlas. Z LAN ověř, že nadále fungují LCD, health check i správa modulů.
+
+Vzdáleně jsou povoleny jen informace, seznam, stavy a události zařízení, panel a existující validované příkazy `/api/iot/devices/:id/command`. Přidávání, odebírání, import, hledání kandidátů a úprava zařízení či klíčů zůstávají pouze v LAN. Server je odmítá nezávisle na UI; na veřejné stránce se správa a příslušná tlačítka skryjí. API `/api/iot/info` a seznam zařízení vracejí `access` (`lan`/`remote`) a `can_manage`. Schéma a validace příkazů se nemění.
+
+Vypnutí vzdáleného přístupu: vyprázdni `HANZHUB_ACCESS_AUD` v `.env` a znovu vytvoř pouze IoT kontejner. Ovládání z domácí sítě zůstane funkční.
+
+### Testování
+
+```bash
+python -m pip install -r iot/requirements.txt
+python -m unittest discover -s tests -v
+node --check web/iot.js
+# Playwright + Chromium:
+node tests/browser-access.cjs
+```
+
+Nové testy používají vlastní testovací RSA klíče, simulovaný IoT adaptér a lokální HTTP server. Pokrývají vzdálené potvrzené zapnutí, vypnutí a teplotu; zákaz správy; falešné podpisy, expiraci, chybný tým/AUD, chybějící identitu, nepovolený origin a chybu načtení klíčů. Prohlížečový test ověřuje ovládání, potvrzení výsledku, skrytou správu, LAN správu, ztrátu přihlášení, žádné příkazy při načtení ani opakování po obnově a mobilní rozložení. Testy nekontaktují skutečný HUB ani topení.

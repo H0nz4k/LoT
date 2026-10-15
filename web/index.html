@@ -37,12 +37,12 @@
     <div class="toolbar">
       <div class="view-tabs" role="tablist" aria-label="Zobrazení IoT">
         <button id="controlTab" role="tab" aria-selected="true" aria-controls="controlView">Ovládání</button>
-        <button id="manageTab" role="tab" aria-selected="false" aria-controls="manageView">Správa modulů</button>
+        <button id="manageTab" role="tab" aria-selected="false" aria-controls="manageView" hidden>Správa modulů</button>
       </div>
       <div class="summary" id="summary" aria-live="polite">Načítám moduly…</div>
       <div class="heading-actions">
         <button class="btn" id="refreshBtn"><svg><use href="#icon-refresh"/></svg>Obnovit</button>
-        <button class="btn btn-primary" id="addBtn"><span class="plus">+</span>Přidat modul</button>
+        <button class="btn btn-primary" id="addBtn" hidden><span class="plus">+</span>Přidat modul</button>
       </div>
     </div>
 
@@ -52,7 +52,7 @@
         <div class="sidebar-heading"><h2>Moje zařízení</h2><span id="moduleCount" class="count">0</span></div>
         <label class="search"><span class="sr-only">Hledat zařízení nebo místnost</span><input id="searchInput" type="search" placeholder="Hledat zařízení nebo místnost…"></label>
         <div id="moduleList" class="module-list"><div class="empty small">Načítám zařízení…</div></div>
-        <div class="sidebar-footer"><span class="connection-dot"></span>Lokální ovládání přes HanzHub</div>
+        <div class="sidebar-footer"><span class="connection-dot"></span><span id="accessMode">Ověřuji přístup…</span></div>
       </aside>
       <div class="control-column">
         <section id="controller" class="controller" aria-label="Ovládání vybraného zařízení"><div class="empty">Vyber zařízení k ovládání.</div></section>
