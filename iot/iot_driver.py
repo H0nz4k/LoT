@@ -30,6 +30,7 @@ DRIVERS = {
         "controls": ["power"],
         "energy": True,
     },
+    "tapo_c320ws": {"name":"TP-Link Tapo C320WS","kind":"camera","controls":[],"snapshot":True},
 }
 
 

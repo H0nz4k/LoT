@@ -63,7 +63,7 @@
     <section id="manageView" class="panel manage-panel" role="tabpanel" aria-labelledby="manageTab" hidden>
       <div class="section-heading"><div><h2>Správa modulů</h2><p class="subtle">Názvy, místnosti a připojení zařízení.</p></div><button class="btn" id="importBtn">Načíst z TinyTuya</button></div>
       <div class="table-wrap"><table><thead><tr><th>Modul</th><th>Místnost</th><th>Připojení</th><th>Stav</th><th><span class="sr-only">Akce</span></th></tr></thead><tbody id="managementTable"></tbody></table></div>
-      <div class="management-note">Podporováno: infrapanel BOT IPH2, spínače Tuya a zásuvka TP-Link Tapo P110M.</div>
+      <div class="management-note">Podporováno: infrapanel BOT IPH2, spínače Tuya, zásuvka Tapo P110M a kamera Tapo C320WS.</div>
     </section>
 
     <footer class="footer"><a href="index.html" data-dashboard>HanzHub</a><span>·</span><span id="versionFooter">—</span><span>·</span>IoT moduly</footer>
@@ -76,7 +76,7 @@
       <div class="form-grid">
         <label>Název<input name="name" maxlength="80" placeholder="Např. infrapanel v obýváku" required></label>
         <label>Místnost<input name="room" maxlength="80" placeholder="Např. obývací pokoj"></label>
-        <label class="full">Typ modulu<select name="driver"><option value="bot_iph2">Infrapanel BOT IPH2</option><option value="tuya_switch">Spínač / zásuvka Tuya</option><option value="tapo_p110m">TP-Link Tapo P110M</option></select></label>
+        <label class="full">Typ modulu<select name="driver"><option value="bot_iph2">Infrapanel BOT IPH2</option><option value="tuya_switch">Spínač / zásuvka Tuya</option><option value="tapo_p110m">TP-Link Tapo P110M</option><option value="tapo_c320ws">TP-Link Tapo C320WS (kamera)</option></select></label>
       </div>
       <div id="sourceSection" class="source-section">
         <div class="source-tabs"><label><input type="radio" name="sourceMode" value="import" checked> Z TinyTuya</label><label><input type="radio" name="sourceMode" value="manual"> Ručně</label></div>
@@ -93,10 +93,10 @@
         <label>Lokální klíč<input name="local_key" type="password" autocomplete="new-password"><span class="form-help" id="keyHelp">Klíč se uloží pouze na serveru.</span></label>
       </div>
       <div id="tapoFields" hidden>
-        <p class="form-help tapo-help">Zásuvka musí být přidaná v aplikaci Tapo a na stejné síti jako HanzHub. Přihlášení ověříme a zařízení rozpoznáme bez změny jeho zapnutí.</p>
+        <p class="form-help tapo-help">Zásuvka používá účet Tapo. Kamera C320WS vyžaduje samostatný Camera Account vytvořený v aplikaci Tapo (Nastavení → Pokročilé → Účet kamery). Komunikace probíhá lokálně přes RTSP 554.</p>
         <div class="form-grid">
-          <label>Účet Tapo (e-mail)<input name="tapo_username" type="email" maxlength="254" autocomplete="off"></label>
-          <label>Heslo účtu Tapo<input name="tapo_password" type="password" maxlength="512" autocomplete="new-password"></label>
+          <label>Účet Tapo / uživatel kamery<input name="tapo_username" type="text" maxlength="254" autocomplete="off"></label>
+          <label>Heslo Tapo / kamery<input name="tapo_password" type="password" maxlength="512" autocomplete="new-password"></label>
         </div>
         <p class="form-help" id="tapoCredentialsHelp">Účet se uloží pouze na serveru HanzHubu. Pro běžné ovládání používáme místní síť.</p>
       </div>

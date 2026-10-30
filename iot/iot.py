@@ -12,6 +12,7 @@ import uuid
 
 from iot_driver import DRIVERS, IoTError, LocalTuya, check_bool, check_int, utc_now, validate_command
 from tapo_driver import LocalTapo
+from camera_driver import LocalCamera
 
 PANEL_MAC = "fc:3c:d7:4c:a2:dc"
 PRIVATE_NETWORKS = tuple(IPv4Network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
@@ -49,12 +50,13 @@ def text_value(value, label, limit, required=False):
 
 
 class IoTManager:
-    def __init__(self, data_dir=None, devices_file=None, adapter=None, cache_seconds=8, tapo_adapter=None):
+    def __init__(self, data_dir=None, devices_file=None, adapter=None, cache_seconds=8, tapo_adapter=None, camera_adapter=None):
         self.data_dir = Path(data_dir or os.environ.get("HANZHUB_IOT_DATA_DIR", "/var/lib/hanzhub-iot"))
         self.devices_file = Path(devices_file or os.environ.get(
             "HANZHUB_IOT_DEVICES_FILE", "/run/hanzhub-iot/devices.json"))
         self.adapter = adapter or LocalTuya()
         self.tapo_adapter = tapo_adapter or LocalTapo()
+        self.camera_adapter = camera_adapter or LocalCamera()
         self.cache_seconds = cache_seconds
         self._cache = {}
         self._locks = {}
@@ -191,9 +193,11 @@ class IoTManager:
         merged["room"] = text_value(merged["room"], "Místnost", 80)
         if not isinstance(merged["driver"], str) or merged["driver"] not in DRIVERS:
             raise IoTError("Zvolený typ modulu není podporovaný.")
-        tapo = merged["driver"] == "tapo_p110m"
-        if current and tapo != (current["driver"] == "tapo_p110m"):
-            raise IoTError("Pro změnu mezi Tapo a Tuya odeberte modul a přidejte jej znovu.")
+        tapo = merged["driver"] in ("tapo_p110m", "tapo_c320ws")
+        if current and tapo != (current["driver"] in ("tapo_p110m", "tapo_c320ws")):
+            raise IoTError("Typ zařízení nelze takto změnit. Odeberte modul a přidejte jej znovu.")
+        if current and current["driver"] != merged["driver"]:
+            raise IoTError("Typ zařízení nelze po založení měnit.")
         merged["device_id"] = text_value(merged.get("device_id", ""), "ID zařízení", 64, not tapo)
         merged["mac"] = normalize_mac(merged["mac"])
         merged["ip"] = local_address(merged.get("ip", ""))
@@ -206,7 +210,7 @@ class IoTManager:
                 for field in ("tapo_username", "tapo_password"):
                     if data.get(field) == "":
                         merged[field] = current[field]
-            merged["tapo_username"] = text_value(merged["tapo_username"], "Účet Tapo", 254, True)
+            merged["tapo_username"] = text_value(merged["tapo_username"], "Účet Tapo / kamery", 254, True)
             password = merged["tapo_password"]
             if not isinstance(password, str) or not 1 <= len(password) <= 512:
                 raise IoTError("Vyplňte heslo účtu Tapo (nejvýše 512 znaků).")
@@ -229,6 +233,9 @@ class IoTManager:
     def add_module(self, data):
         module = self._validated(data)
         initial_state = None
+        if module["driver"] == "tapo_c320ws":
+            initial_state = self.camera_adapter.status(module)
+            module["device_id"] = "tapo-c320ws-" + module["ip"]
         if module["driver"] == "tapo_p110m":
             # Jen čtení: ověří účet, model a skutečnou identitu ještě před uložením.
             initial_state = self.tapo_adapter.status(module)
@@ -301,7 +308,7 @@ class IoTManager:
             try:
                 mac = normalize_mac(row.get("mac"))
                 with self._db() as db:
-                    existing = db.execute("SELECT id FROM modules WHERE driver != 'tapo_p110m' AND (device_id = ? OR (mac IS NOT NULL AND mac = ?))",
+                    existing = db.execute("SELECT id FROM modules WHERE driver NOT IN ('tapo_p110m', 'tapo_c320ws') AND (device_id = ? OR (mac IS NOT NULL AND mac = ?))",
                                           (row["id"], mac)).fetchone()
                 if existing:
                     # Zachová ručně zvolenou IP a uživatelské názvy; obnoví identitu a klíč po přepárování.
@@ -358,6 +365,7 @@ class IoTManager:
                     return dict(cached[1])
             try:
                 state = (self.tapo_adapter.status(module) if module["driver"] == "tapo_p110m"
+                         else self.camera_adapter.status(module) if module["driver"] == "tapo_c320ws"
                          else self._tuya_state(module))
             except IoTError as error:
                 state = {"online": False, "error": str(error), "error_code": error.code}
@@ -365,6 +373,15 @@ class IoTManager:
             with self._guard:
                 self._cache[module_id] = (time.monotonic(), state)
             return dict(state)
+
+    def snapshot(self, module_id):
+        module = self._module(module_id)
+        if module["driver"] != "tapo_c320ws":
+            raise IoTError("Zařízení není kamera.", 404, "not_camera")
+        if not module["enabled"]:
+            raise IoTError("Kamera je pozastavená.", 409, "paused")
+        with self._device_lock(module_id):
+            return self.camera_adapter.snapshot(self._module(module_id))
 
     def command(self, module_id, command):
         module = self._module(module_id)
