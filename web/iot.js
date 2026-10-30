@@ -99,13 +99,13 @@ function updateController() {
       img.src = `/api/iot/devices/${m.id}/snapshot?t=${Date.now()}`;
       img.dataset.next = String(Date.now() + 10000);
     }
-    $('power-badge').className = 'power-badge' + (online ? ' on' : '');
+    $('powerBadge').className = 'power-badge' + (online ? ' on' : '');
     $('powerBadge').textContent = online ? 'Online' : statusLabel(m);
     showError('deviceNotice', !m.enabled ? 'Kamera je pozastavená.' : s && !online ? s.error || 'Kamera nedostupná.' : '');
     $('lastObserved').textContent = s?.checked_at ? `Poslední kontrola ${timeLabel(s.checked_at)}` : 'Čekám na stav…';
     return;
   }
-  $('powerBadge').className = 'powerBadge' + (online ? s.power ? ' on' : ' off' : '');
+  $('powerBadge').className = 'power-badge' + (online ? s.power ? ' on' : ' off' : '');
   $('powerBadge').textContent = online ? s.power ? 'Zapnuto' : 'Vypnuto' : statusLabel(m);
   $('controller').classList.toggle('is-on', online && s.power);
   $('controller').classList.toggle('is-plug', m.driver === 'tapo_p110m');
