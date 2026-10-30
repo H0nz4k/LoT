@@ -9,7 +9,7 @@ services:
     security_opt:
       - no-new-privileges:true
   recorder:
-    image: linuxserver/ffmpeg:7.1.1
+    image: linuxserver/ffmpeg:latest
     restart: unless-stopped
     profiles: ["record"]
     network_mode: host
@@ -22,7 +22,7 @@ services:
     security_opt:
       - no-new-privileges:true
   motion:
-    image: linuxserver/ffmpeg:7.1.1
+    image: linuxserver/ffmpeg:latest
     restart: unless-stopped
     profiles: ["motion"]
     network_mode: host
