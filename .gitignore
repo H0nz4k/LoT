@@ -1,4 +1,5 @@
 .env
+ewelink.json
 .venv/
 __pycache__/
 *.py[cod]

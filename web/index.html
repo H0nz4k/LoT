@@ -76,7 +76,7 @@
       <div class="form-grid">
         <label>Název<input name="name" maxlength="80" placeholder="Např. infrapanel v obýváku" required></label>
         <label>Místnost<input name="room" maxlength="80" placeholder="Např. obývací pokoj"></label>
-        <label class="full">Typ modulu<select name="driver"><option value="bot_iph2">Infrapanel BOT IPH2</option><option value="tuya_switch">Spínač / zásuvka Tuya</option><option value="tapo_p110m">TP-Link Tapo P110M</option></select></label>
+        <label class="full">Typ modulu<select name="driver"><option value="bot_iph2">Infrapanel BOT IPH2</option><option value="tuya_switch">Spínač / zásuvka Tuya</option><option value="tapo_p110m">TP-Link Tapo P110M</option><option value="sonoff_s60tpf">SONOFF S60TPF · eWeLink cloud</option></select></label>
       </div>
       <div id="sourceSection" class="source-section">
         <div class="source-tabs"><label><input type="radio" name="sourceMode" value="import" checked> Z TinyTuya</label><label><input type="radio" name="sourceMode" value="manual"> Ručně</label></div>
@@ -84,13 +84,18 @@
         <p class="form-help" id="candidateHelp">Klíč se načte ze souboru na Raspberry.</p>
       </div>
       <div class="form-grid connection-form">
-        <label>IP adresa<input name="ip" placeholder="192.168.1.102" required></label>
+        <label id="ipLabel">IP adresa<input name="ip" placeholder="192.168.1.102" required></label>
         <label id="tuyaVersionLabel">Tuya protokol<select name="version"><option>3.4</option><option>3.3</option><option>3.5</option><option>3.2</option><option>3.1</option></select></label>
         <label id="macLabel">MAC adresa<input name="mac" placeholder="fc:3c:d7:4c:a2:dc"></label>
       </div>
       <div id="manualFields" class="form-grid" hidden>
         <label class="full">ID zařízení<input name="device_id" maxlength="64" autocomplete="off"></label>
         <label>Lokální klíč<input name="local_key" type="password" autocomplete="new-password"><span class="form-help" id="keyHelp">Klíč se uloží pouze na serveru.</span></label>
+      </div>
+      <div id="sonoffFields" hidden>
+        <p class="form-help">Zásuvka musí být spárovaná v eWeLink. Správce nejprve uloží OAuth přístup do soukromého souboru na serveru. Ovládání vyžaduje internet; při přidání ověříme model bez zapnutí zásuvky.</p>
+        <label>ID zařízení eWeLink<input name="sonoff_device_id" maxlength="64" autocomplete="off"></label>
+        <p class="form-help">Heslo ani OAuth token sem nezadávej. Neověřené měření se zobrazí jako nedostupné.</p>
       </div>
       <div id="tapoFields" hidden>
         <p class="form-help tapo-help">Zásuvka musí být přidaná v aplikaci Tapo a na stejné síti jako HanzHub. Přihlášení ověříme a zařízení rozpoznáme bez změny jeho zapnutí.</p>

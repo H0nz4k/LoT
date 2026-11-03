@@ -254,6 +254,11 @@ Ve verzi 1.1.0 prošlo 45 automatických testů a kontrola syntaxe Python/JavaSc
 
 Zdroje: [TinyTuya](https://github.com/jasonacox/tinytuya), [potvrzený Tuya thing model endpoint](https://developer.tuya.com/en/docs/cloud/bd68171262?id=Kcp4utbhzzfgo), [původní HanzHub Dashboard](https://github.com/H0nz4k/Dashboard).
 
+## SONOFF S60TPF
+
+Integrace původní Wi-Fi zásuvky přes oficiální eWeLink OAuth v2 je popsána
+v [návodu SONOFF](docs/sonoff-s60tpf.md). Vyžaduje vlastní OAuth aplikaci a
+soukromě uložený token; neověřené měření zůstává nedostupné.
 
 ## Integrace Příchod / Odchod
 

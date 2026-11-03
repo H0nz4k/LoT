@@ -12,6 +12,7 @@ import uuid
 
 from iot_driver import DRIVERS, IoTError, LocalTuya, check_bool, check_int, utc_now, validate_command
 from tapo_driver import LocalTapo
+from sonoff_driver import CloudSonoff
 
 PANEL_MAC = "fc:3c:d7:4c:a2:dc"
 PRIVATE_NETWORKS = tuple(IPv4Network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
@@ -49,12 +50,13 @@ def text_value(value, label, limit, required=False):
 
 
 class IoTManager:
-    def __init__(self, data_dir=None, devices_file=None, adapter=None, cache_seconds=8, tapo_adapter=None):
+    def __init__(self, data_dir=None, devices_file=None, adapter=None, cache_seconds=8, tapo_adapter=None, sonoff_adapter=None):
         self.data_dir = Path(data_dir or os.environ.get("HANZHUB_IOT_DATA_DIR", "/var/lib/hanzhub-iot"))
         self.devices_file = Path(devices_file or os.environ.get(
             "HANZHUB_IOT_DEVICES_FILE", "/run/hanzhub-iot/devices.json"))
         self.adapter = adapter or LocalTuya()
         self.tapo_adapter = tapo_adapter or LocalTapo()
+        self.sonoff_adapter = sonoff_adapter or CloudSonoff()
         self.cache_seconds = cache_seconds
         self._cache = {}
         self._locks = {}
@@ -192,6 +194,21 @@ class IoTManager:
         if not isinstance(merged["driver"], str) or merged["driver"] not in DRIVERS:
             raise IoTError("Zvolený typ modulu není podporovaný.")
         tapo = merged["driver"] == "tapo_p110m"
+        sonoff = merged["driver"] == "sonoff_s60tpf"
+        if sonoff or (current and current["driver"] == "sonoff_s60tpf"):
+            if current and merged["driver"] != current["driver"]:
+                raise IoTError("Pro změnu typu SONOFF odeberte modul a přidejte jej znovu.")
+            if any(data.get(k) for k in ("source_id", "local_key", "tapo_username", "tapo_password", "mac", "ip")):
+                raise IoTError("SONOFF cloud používá ID zařízení a OAuth soubor na serveru, nikoli LAN klíč nebo účet Tapo.")
+            merged["device_id"] = text_value(merged.get("device_id", ""), "ID eWeLink", 64, True)
+            if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", merged["device_id"]):
+                raise IoTError("Neplatné ID eWeLink.")
+            if current and merged["device_id"] != current["device_id"]:
+                raise IoTError("Pro změnu identity SONOFF přidejte nový modul.")
+            merged.update(ip="", mac=None, version="oauth2", local_key="", power_dp=1,
+                          tapo_username="", tapo_password="")
+            merged["enabled"] = check_bool(merged["enabled"])
+            return merged
         if current and tapo != (current["driver"] == "tapo_p110m"):
             raise IoTError("Pro změnu mezi Tapo a Tuya odeberte modul a přidejte jej znovu.")
         merged["device_id"] = text_value(merged.get("device_id", ""), "ID zařízení", 64, not tapo)
@@ -229,6 +246,8 @@ class IoTManager:
     def add_module(self, data):
         module = self._validated(data)
         initial_state = None
+        if module["driver"] == "sonoff_s60tpf":
+            initial_state = self.sonoff_adapter.status(module)  # Read-only identity and protocol check.
         if module["driver"] == "tapo_p110m":
             # Jen čtení: ověří účet, model a skutečnou identitu ještě před uložením.
             initial_state = self.tapo_adapter.status(module)
@@ -301,7 +320,7 @@ class IoTManager:
             try:
                 mac = normalize_mac(row.get("mac"))
                 with self._db() as db:
-                    existing = db.execute("SELECT id FROM modules WHERE driver != 'tapo_p110m' AND (device_id = ? OR (mac IS NOT NULL AND mac = ?))",
+                    existing = db.execute("SELECT id FROM modules WHERE driver IN ('bot_iph2','tuya_switch') AND (device_id = ? OR (mac IS NOT NULL AND mac = ?))",
                                           (row["id"], mac)).fetchone()
                 if existing:
                     # Zachová ručně zvolenou IP a uživatelské názvy; obnoví identitu a klíč po přepárování.
@@ -357,8 +376,8 @@ class IoTManager:
                 if cached and not fresh and time.monotonic() - cached[0] < self.cache_seconds:
                     return dict(cached[1])
             try:
-                state = (self.tapo_adapter.status(module) if module["driver"] == "tapo_p110m"
-                         else self._tuya_state(module))
+                state = (self.sonoff_adapter.status(module) if module["driver"] == "sonoff_s60tpf" else
+                         self.tapo_adapter.status(module) if module["driver"] == "tapo_p110m" else self._tuya_state(module))
             except IoTError as error:
                 state = {"online": False, "error": str(error), "error_code": error.code}
             state["checked_at"] = utc_now()
@@ -376,7 +395,8 @@ class IoTManager:
             # Typ se mohl změnit během čekání na zámek.
             validate_command(module["driver"], command)
             try:
-                adapter = self.tapo_adapter if module["driver"] == "tapo_p110m" else self.adapter
+                adapter = (self.sonoff_adapter if module["driver"] == "sonoff_s60tpf" else
+                           self.tapo_adapter if module["driver"] == "tapo_p110m" else self.adapter)
                 state = adapter.command(module, command)
             except IoTError as error:
                 with self._guard:
@@ -386,7 +406,8 @@ class IoTManager:
             state["checked_at"] = utc_now()
             with self._guard:
                 self._cache[module_id] = (time.monotonic(), state)
-            self._event(module_id, control, value, True, "Potvrzeno zařízením")
+            self._event(module_id, control, value, True,
+                        "Stav potvrzen eWeLink cloudem" if module["driver"] == "sonoff_s60tpf" else "Potvrzeno zařízením")
             return state
 
     def _event(self, module_id, control, value, ok, message):
