@@ -1,5 +1,9 @@
+from contextlib import redirect_stdout
+from datetime import datetime
+import io
 import json
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -8,6 +12,7 @@ import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'iot'))
@@ -134,6 +139,14 @@ class DriverTests(ManagerFixture):
         self.assertTrue(state['power'])
         self.assertEqual(state['fault_code'], 1)
         self.assertIn('E1', state['faults'][0])
+
+    def test_missing_countdown_does_not_disconnect_heater_or_invent_zero(self):
+        self.device.dps['1']=False
+        del self.device.dps['5']
+        state=self.manager.state(self.id)
+        self.assertTrue(state['online']);self.assertFalse(state['power'])
+        self.assertEqual(state['target_temp_c'],26);self.assertIsNone(state['timer_minutes'])
+        self.assertEqual(self.device.writes,[])
 
     def test_incomplete_response_is_unknown(self):
         del self.device.dps['3']
@@ -474,6 +487,118 @@ class HTTPTests(ManagerFixture):
         self.assertIn('IoT moduly'.encode(), self.request('/')[1])
         self.assertEqual(self.request('/iot.js')[0], 200)
         self.assertTrue(json.loads(self.request('/api/iot/health')[1])['ok'])
+
+    def test_http_schedule_and_presets_roundtrip(self):
+        today = datetime.now(ZoneInfo('Europe/Prague')).weekday()
+        other = (today + 3) % 7
+        code, payload = self.request(f'/api/iot/devices/{self.id}/presets')
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(payload)['temps'], [17, 19, 21])
+        self.assertNotIn(TEST_KEY.encode(), payload)
+        code, payload = self.request(f'/api/iot/devices/{self.id}/presets', 'PUT', {'temps': [17, 19, 22]})
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(payload)['temps'], [17, 19, 22])
+        code, payload = self.request(f'/api/iot/devices/{self.id}/schedule', 'POST', {
+            'days': [other], 'start': '07:00', 'end': '07:30', 'target_temp_c': 20,
+        })
+        self.assertEqual(code, 201)
+        rule_id = json.loads(payload)['rule']['id']
+        self.assertNotIn(TEST_KEY.encode(), payload)
+        code, payload = self.request(f'/api/iot/devices/{self.id}/schedule')
+        body = json.loads(payload)
+        self.assertEqual(code, 200)
+        self.assertEqual(body['rules'][0]['id'], rule_id)
+        self.assertIsNone(body['active'])
+        code, payload = self.request(f'/api/iot/devices/{self.id}/schedule/{rule_id}', 'PUT', {
+            'days': [other], 'start': '07:05', 'end': '07:30', 'target_temp_c': 19,
+        })
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(payload)['rule']['target_temp_c'], 19)
+        code, payload = self.request(f'/api/iot/devices/{self.id}/schedule/{rule_id}', 'DELETE')
+        self.assertEqual(code, 200)
+        code, payload = self.request(f'/api/iot/devices/{self.id}/schedule')
+        self.assertEqual(json.loads(payload)['rules'], [])
+        self.assertEqual(self.device.writes, [])
+
+
+class ScheduleTests(ManagerFixture):
+    def stored_key(self):
+        db = sqlite3.connect(self.manager.db_path)
+        try:
+            return db.execute('SELECT local_key FROM modules WHERE id = ?', (self.id,)).fetchone()[0]
+        finally:
+            db.close()
+
+    def rule(self, days=(0, 1, 2, 3, 4), start='07:00', end='07:30', temp=20):
+        return self.manager.create_rule(self.id, {
+            'days': list(days), 'start': start, 'end': end, 'target_temp_c': temp,
+        })
+
+    def test_window_uses_same_driver_then_turns_off_and_overlap_keeps_power(self):
+        zone = ZoneInfo('Europe/Prague')
+        monday = datetime(2026, 10, 12, 7, 10, tzinfo=zone)
+        self.assertEqual(monday.weekday(), 0)
+        self.device.dps['1'] = False
+        self.device.dps['3'] = 18
+        self.rule(temp=20)
+        later = self.rule(days=(0,), start='07:20', end='08:00', temp=21)
+        self.manager.apply_schedules(now=monday)
+        self.assertEqual(self.device.writes, [(1, True), (3, 20)])
+        self.manager.apply_schedules(now=monday)
+        self.assertEqual(self.device.writes, [(1, True), (3, 20)])
+        self.manager.apply_schedules(now=datetime(2026, 10, 12, 7, 25, tzinfo=zone))
+        self.assertEqual(self.device.writes, [(1, True), (3, 20), (3, 21)])
+        self.assertEqual(self.manager._meta_get(f'schedule_hold:{self.id}'), later['id'])
+        self.manager.apply_schedules(now=datetime(2026, 10, 12, 8, 0, tzinfo=zone))
+        self.assertEqual(self.device.writes[-1], (1, False))
+        self.assertIsNone(self.manager._meta_get(f'schedule_hold:{self.id}'))
+        self.assertEqual(self.stored_key(), TEST_KEY)
+
+    def test_empty_plan_and_manual_power_are_left_alone(self):
+        before = list(self.device.writes)
+        calls = self.device.calls
+        self.manager.apply_schedules(now=datetime(2026, 10, 12, 7, 10, tzinfo=ZoneInfo('Europe/Prague')))
+        self.assertEqual(self.device.writes, before)
+        self.assertEqual(self.device.calls, calls)
+        self.device.dps['1'] = True
+        self.manager.apply_schedules(now=datetime(2026, 10, 13, 7, 10, tzinfo=ZoneInfo('Europe/Prague')))
+        self.assertTrue(self.device.dps['1'])
+        self.assertEqual(self.device.writes, before)
+
+    def test_offline_rule_keeps_key_and_rule(self):
+        self.device.fail = True
+        self.device.dps['1'] = False
+        created = self.rule()
+        moment = datetime(2026, 10, 12, 7, 10, tzinfo=ZoneInfo('Europe/Prague'))
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.manager.apply_schedules(now=moment)
+        self.assertEqual(self.device.writes, [])
+        self.assertEqual(self.stored_key(), TEST_KEY)
+        self.assertNotIn(TEST_KEY, output.getvalue())
+        self.assertIn(self.id, output.getvalue())
+        view = self.manager.schedule_view(self.id, now=moment)
+        self.assertEqual(view['rules'][0]['id'], created['id'])
+        self.assertEqual(view['active']['target_temp_c'], 20)
+
+    def test_rules_and_presets_survive_new_manager(self):
+        created = self.rule(days=(6,), start='03:00', end='03:15', temp=15)
+        self.manager.update_rule(self.id, created['id'], {
+            'days': [6], 'start': '03:00', 'end': '03:20', 'target_temp_c': 16,
+        })
+        self.assertEqual(self.manager.presets(self.id)['temps'], [17, 19, 21])
+        self.assertEqual(self.manager.set_presets(self.id, {'temps': [16, 18, 22]})['temps'], [16, 18, 22])
+        again = IoTManager(self.manager.data_dir, self.source, self.adapter)
+        view = again.schedule_view(self.id, now=datetime(2026, 10, 13, 12, 0, tzinfo=ZoneInfo('Europe/Prague')))
+        self.assertEqual(view['timezone'], 'Europe/Prague')
+        self.assertEqual(view['rules'][0]['end'], '03:20')
+        self.assertEqual(view['rules'][0]['target_temp_c'], 16)
+        self.assertIsNone(view['active'])
+        self.assertEqual(again.presets(self.id)['temps'], [16, 18, 22])
+        again.delete_rule(self.id, created['id'])
+        self.assertEqual(again.schedule_view(self.id)['rules'], [])
+        with self.assertRaises(IoTError):
+            self.manager.create_rule(self.id, {'days': [0], 'start': '08:00', 'end': '07:00', 'target_temp_c': 20})
 
 
 if __name__ == '__main__':

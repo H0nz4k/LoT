@@ -11,7 +11,9 @@ import time
 import uuid
 
 from iot_driver import DRIVERS, IoTError, LocalTuya, check_bool, check_int, utc_now, validate_command
+from schedule import DEFAULT_PRESETS, active_rule, prague_now, rule_public, validate_presets, validate_rule
 from tapo_driver import LocalTapo
+from ewelink_driver import SonoffAdapter
 
 PANEL_MAC = "fc:3c:d7:4c:a2:dc"
 PRIVATE_NETWORKS = tuple(IPv4Network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
@@ -55,10 +57,13 @@ class IoTManager:
             "HANZHUB_IOT_DEVICES_FILE", "/run/hanzhub-iot/devices.json"))
         self.adapter = adapter or LocalTuya()
         self.tapo_adapter = tapo_adapter or LocalTapo()
+        self.ewelink_adapter = SonoffAdapter()
         self.cache_seconds = cache_seconds
         self._cache = {}
         self._locks = {}
         self._guard = threading.RLock()
+        self._schedule_logs = {}
+        self._scheduler_stop = None
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(self.data_dir, 0o700)
@@ -78,6 +83,17 @@ class IoTManager:
                         message TEXT NOT NULL, at TEXT NOT NULL
                     );
                     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                    CREATE TABLE IF NOT EXISTS schedules (
+                        id TEXT PRIMARY KEY, module_id TEXT NOT NULL, days TEXT NOT NULL,
+                        start_min INTEGER NOT NULL, end_min INTEGER NOT NULL,
+                        target_temp_c INTEGER NOT NULL, enabled INTEGER NOT NULL,
+                        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS schedules_module ON schedules(module_id);
+                    CREATE TABLE IF NOT EXISTS temp_presets (
+                        module_id TEXT NOT NULL, slot INTEGER NOT NULL, temp_c INTEGER NOT NULL,
+                        PRIMARY KEY (module_id, slot)
+                    );
                 """)
                 columns = {row["name"] for row in db.execute("PRAGMA table_info(modules)")}
                 for field in ("tapo_username", "tapo_password"):
@@ -191,6 +207,20 @@ class IoTManager:
         merged["room"] = text_value(merged["room"], "Místnost", 80)
         if not isinstance(merged["driver"], str) or merged["driver"] not in DRIVERS:
             raise IoTError("Zvolený typ modulu není podporovaný.")
+        sonoff = merged["driver"] == "sonoff_ewelink"
+        if current and sonoff != (current["driver"] == "sonoff_ewelink"):
+            raise IoTError("Při změně mezi eWeLink a lokálním modulem přidej nové zařízení.")
+        if sonoff:
+            device_id = text_value(merged.get("device_id", ""), "ID zařízení", 64, True)
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}",device_id):
+                raise IoTError("Neplatné ID eWeLink zařízení.")
+            candidate = next((x for x in self.ewelink_adapter.client.devices() if x['device_id']==device_id),None)
+            if candidate is None:
+                raise IoTError("Vyber podporovanou Sonoff zásuvku z připojeného účtu.")
+            if data.get("local_key") or data.get("tapo_username") or data.get("tapo_password"):
+                raise IoTError("Sonoff používá OAuth připojení eWeLink.")
+            merged.update(device_id=device_id,ip="",mac=None,version="cloud",power_dp=1,local_key="",tapo_username="",tapo_password="",enabled=check_bool(merged['enabled']))
+            return merged
         tapo = merged["driver"] == "tapo_p110m"
         if current and tapo != (current["driver"] == "tapo_p110m"):
             raise IoTError("Pro změnu mezi Tapo a Tuya odeberte modul a přidejte jej znovu.")
@@ -229,6 +259,8 @@ class IoTManager:
     def add_module(self, data):
         module = self._validated(data)
         initial_state = None
+        if module["driver"] == "sonoff_ewelink":
+            initial_state = self.ewelink_adapter.status(module)
         if module["driver"] == "tapo_p110m":
             # Jen čtení: ověří účet, model a skutečnou identitu ještě před uložením.
             initial_state = self.tapo_adapter.status(module)
@@ -278,6 +310,9 @@ class IoTManager:
             with self._db() as db:
                 db.execute("DELETE FROM modules WHERE id = ?", (module_id,))
                 db.execute("DELETE FROM events WHERE module_id = ?", (module_id,))
+                db.execute("DELETE FROM schedules WHERE module_id = ?", (module_id,))
+                db.execute("DELETE FROM temp_presets WHERE module_id = ?", (module_id,))
+                db.execute("DELETE FROM meta WHERE key = ?", (f"schedule_hold:{module_id}",))
             with self._guard:
                 self._cache.pop(module_id, None)
 
@@ -357,7 +392,8 @@ class IoTManager:
                 if cached and not fresh and time.monotonic() - cached[0] < self.cache_seconds:
                     return dict(cached[1])
             try:
-                state = (self.tapo_adapter.status(module) if module["driver"] == "tapo_p110m"
+                state = (self.ewelink_adapter.status(module) if module["driver"] == "sonoff_ewelink" else
+                         self.tapo_adapter.status(module) if module["driver"] == "tapo_p110m"
                          else self._tuya_state(module))
             except IoTError as error:
                 state = {"online": False, "error": str(error), "error_code": error.code}
@@ -376,7 +412,7 @@ class IoTManager:
             # Typ se mohl změnit během čekání na zámek.
             validate_command(module["driver"], command)
             try:
-                adapter = self.tapo_adapter if module["driver"] == "tapo_p110m" else self.adapter
+                adapter = self.ewelink_adapter if module["driver"] == "sonoff_ewelink" else self.tapo_adapter if module["driver"] == "tapo_p110m" else self.adapter
                 state = adapter.command(module, command)
             except IoTError as error:
                 with self._guard:
@@ -404,6 +440,201 @@ class IoTManager:
             else:
                 rows = db.execute("SELECT * FROM events ORDER BY id DESC LIMIT 20").fetchall()
         return [{**dict(row), "value": json.loads(row["value"]), "ok": bool(row["ok"])} for row in rows]
+
+    def _require_heater(self, module_id):
+        module = self._module(module_id)
+        if module["driver"] != "bot_iph2":
+            raise IoTError("Plánovač a rychlé volby jsou jen u infrapanelu.", 404, "not_found")
+        return module
+
+    def _meta_get(self, key):
+        with self._db() as db:
+            row = db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return None if row is None else row["value"]
+
+    def _meta_set(self, key, value):
+        with self._db() as db:
+            if value is None or value == "":
+                db.execute("DELETE FROM meta WHERE key = ?", (key,))
+            else:
+                db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)", (key, value))
+
+    def _rules(self, module_id):
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT * FROM schedules WHERE module_id = ? ORDER BY start_min, id", (module_id,)).fetchall()
+        rules = []
+        for row in rows:
+            try:
+                days = json.loads(row["days"])
+            except ValueError:
+                continue
+            if not isinstance(days, list):
+                continue
+            rules.append({
+                "id": row["id"], "days": days, "start_min": row["start_min"], "end_min": row["end_min"],
+                "target_temp_c": row["target_temp_c"], "enabled": bool(row["enabled"]),
+            })
+        return rules
+
+    def _public_rule(self, module_id, rule_id):
+        rule = next((item for item in self._rules(module_id) if item["id"] == rule_id), None)
+        if rule is None:
+            raise IoTError("Pravidlo nenalezeno.", 404, "not_found")
+        return rule_public(rule)
+
+    def schedule_view(self, module_id, now=None):
+        self._require_heater(module_id)
+        moment = prague_now(now)
+        rules = self._rules(module_id)
+        active = active_rule(rules, moment)
+        return {
+            "timezone": "Europe/Prague",
+            "now": moment.isoformat(timespec="seconds"),
+            "active": rule_public(active) if active else None,
+            "rules": [rule_public(rule) for rule in rules],
+        }
+
+    def create_rule(self, module_id, data):
+        self._require_heater(module_id)
+        parsed = validate_rule(data)
+        rule_id = uuid.uuid4().hex[:12]
+        now = utc_now()
+        with self._db() as db:
+            count = db.execute("SELECT COUNT(*) FROM schedules WHERE module_id = ?", (module_id,)).fetchone()[0]
+            if count >= 40:
+                raise IoTError("Plánovač má nejvýše 40 pravidel.")
+            db.execute(
+                """INSERT INTO schedules(id, module_id, days, start_min, end_min, target_temp_c, enabled, created_at, updated_at)
+                   VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (rule_id, module_id, json.dumps(parsed["days"]), parsed["start_min"], parsed["end_min"],
+                 parsed["target_temp_c"], int(parsed["enabled"]), now, now))
+        return self._public_rule(module_id, rule_id)
+
+    def update_rule(self, module_id, rule_id, data):
+        self._require_heater(module_id)
+        self._public_rule(module_id, rule_id)
+        parsed = validate_rule(data)
+        with self._db() as db:
+            db.execute(
+                """UPDATE schedules SET days = ?, start_min = ?, end_min = ?, target_temp_c = ?, enabled = ?, updated_at = ?
+                   WHERE id = ? AND module_id = ?""",
+                (json.dumps(parsed["days"]), parsed["start_min"], parsed["end_min"], parsed["target_temp_c"],
+                 int(parsed["enabled"]), utc_now(), rule_id, module_id))
+        return self._public_rule(module_id, rule_id)
+
+    def delete_rule(self, module_id, rule_id):
+        self._require_heater(module_id)
+        with self._db() as db:
+            cursor = db.execute("DELETE FROM schedules WHERE id = ? AND module_id = ?", (rule_id, module_id))
+            if cursor.rowcount != 1:
+                raise IoTError("Pravidlo nenalezeno.", 404, "not_found")
+
+    def presets(self, module_id):
+        self._require_heater(module_id)
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT slot, temp_c FROM temp_presets WHERE module_id = ? ORDER BY slot", (module_id,)).fetchall()
+        found = {row["slot"]: row["temp_c"] for row in rows}
+        return {"temps": [found.get(slot, DEFAULT_PRESETS[slot]) for slot in range(3)]}
+
+    def set_presets(self, module_id, data):
+        self._require_heater(module_id)
+        temps = validate_presets(data)
+        with self._db() as db:
+            for slot, temp in enumerate(temps):
+                db.execute(
+                    "INSERT OR REPLACE INTO temp_presets(module_id, slot, temp_c) VALUES(?, ?, ?)",
+                    (module_id, slot, temp))
+        return {"temps": temps}
+
+    def _schedule_log(self, module_id, message):
+        text = " ".join(str(message).split())[:240]
+        now = time.monotonic()
+        with self._guard:
+            previous = self._schedule_logs.get(module_id)
+            if previous and previous[0] == text and now - previous[1] < 60:
+                return
+            self._schedule_logs[module_id] = (text, now)
+        print(f"Plánovač {module_id}: {text}", flush=True)
+
+    def _schedule_engage(self, module_id, rule):
+        state = self.state(module_id, fresh=True)
+        if not state.get("online"):
+            self._schedule_log(module_id, state.get("error") or "panel je offline, pravidlo zůstává uložené")
+            return
+        try:
+            changed = False
+            if state.get("power") is not True:
+                state = self.command(module_id, {"control": "power", "value": True})
+                changed = True
+            if state.get("target_temp_c") != rule["target_temp_c"]:
+                self.command(module_id, {"control": "target_temp_c", "value": rule["target_temp_c"]})
+                changed = True
+            self._meta_set(f"schedule_hold:{module_id}", rule["id"])
+            if changed:
+                self._schedule_log(module_id, f"okno pravidla, cíl {rule['target_temp_c']} °C")
+        except IoTError as error:
+            self._schedule_log(module_id, f"{error} Pravidlo ani klíč se nemažou.")
+            try:
+                cached = self.state(module_id)
+            except IoTError:
+                return
+            if cached.get("online") and cached.get("power"):
+                self._meta_set(f"schedule_hold:{module_id}", rule["id"])
+
+    def _schedule_release(self, module_id):
+        state = self.state(module_id, fresh=True)
+        if not state.get("online"):
+            self._schedule_log(module_id, state.get("error") or "panel je offline, vypnutí po konci okna zkusím znovu")
+            return
+        try:
+            if state.get("power"):
+                self.command(module_id, {"control": "power", "value": False})
+                self._schedule_log(module_id, "konec okna, panel vypnut")
+            self._meta_set(f"schedule_hold:{module_id}", None)
+        except IoTError as error:
+            self._schedule_log(module_id, f"{error} Panel zůstává v evidenci plánovače, klíč se nemění.")
+
+    def _apply_module_schedule(self, module_id, moment):
+        module = self._module(module_id)
+        if module["driver"] != "bot_iph2" or not module["enabled"]:
+            return
+        active = active_rule(self._rules(module_id), moment)
+        hold = self._meta_get(f"schedule_hold:{module_id}")
+        if active is None:
+            if hold:
+                self._schedule_release(module_id)
+            return
+        self._schedule_engage(module_id, active)
+
+    def apply_schedules(self, now=None):
+        moment = prague_now(now)
+        with self._db() as db:
+            rows = db.execute("SELECT id FROM modules WHERE driver = 'bot_iph2' AND enabled = 1").fetchall()
+        for row in rows:
+            try:
+                self._apply_module_schedule(row["id"], moment)
+            except IoTError as error:
+                self._schedule_log(row["id"], f"{error} Uložený klíč se nemění.")
+            except Exception:
+                self._schedule_log(row["id"], "vnitřní chyba, uložený klíč se nemění")
+
+    def start_scheduler(self, interval=15):
+        if self._scheduler_stop is not None:
+            return
+        self._scheduler_stop = threading.Event()
+
+        def run():
+            while not self._scheduler_stop.is_set():
+                try:
+                    self.apply_schedules()
+                except Exception:
+                    print("Plánovač: vnitřní chyba, uložený klíč se nemění.", flush=True)
+                if self._scheduler_stop.wait(interval):
+                    break
+
+        threading.Thread(target=run, name="iot-scheduler", daemon=True).start()
 
     def panel(self, module_id=None):
         modules = self.list_modules()

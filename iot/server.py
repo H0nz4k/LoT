@@ -16,6 +16,8 @@ import urllib.request
 
 from iot import IoTManager, PRIVATE_NETWORKS
 from iot_driver import DRIVERS, IoTError
+from access import RemoteAccess, remote_route_allowed
+import sys
 
 WEB_DIR = Path(os.environ.get("HANZHUB_IOT_WEB_DIR", Path(__file__).resolve().parent.parent / "web"))
 ASSETS = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -26,6 +28,7 @@ ASSETS = {"/": ("index.html", "text/html; charset=utf-8"),
           "/hanzlogo.svg": ("hanzlogo.svg", "image/svg+xml"),
           "/favicon.svg": ("favicon.svg", "image/svg+xml"),
           "/iot-icon.svg": ("iot-icon.svg", "image/svg+xml"),
+          "/ewelink.js": ("ewelink.js", "text/javascript; charset=utf-8"),
           "/version.json": ("version.json", "application/json")}
 
 
@@ -37,26 +40,43 @@ def internal_ip(value):
         return False
 
 
-def allowed_request(handler):
+def request_access(handler):
     peer = handler.client_address[0]
     if not internal_ip(peer):
-        return False
+        return None
+    access = handler.server.remote_access
+    token = handler.headers.get("Cf-Access-Jwt-Assertion")
     # Pouze místní reverse proxy smí předat původní adresu klienta.
     forwarded = handler.headers.get("CF-Connecting-IP") or handler.headers.get("X-Forwarded-For")
-    if forwarded and not internal_ip(forwarded.split(",")[0].strip()):
-        return False
+    remote = bool(token or (forwarded and not internal_ip(forwarded.split(",")[0].strip()))
+                  or (access.origin and handler.headers.get("Host") == urlsplit(access.origin).netloc))
     origin = handler.headers.get("Origin")
     if origin:
         try:
             parsed = urlsplit(origin)
         except ValueError:
-            return False
+            return None
         if parsed.scheme not in ("http", "https") or parsed.netloc != handler.headers.get("Host", ""):
-            return False
-    return True
+            return None
+        if remote and origin != access.origin:
+            return None
+    if remote:
+        # Do not fall back to LAN if a forwarded identity/token is invalid.
+        if not access.enabled or handler.headers.get("Host") != urlsplit(access.origin).netloc:
+            return None
+        return "remote" if access.verify(token) else None
+    return "lan"
+
+
+def allowed_request(handler):
+    return request_access(handler) is not None
 
 
 class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        # Never log OAuth query parameters or application secrets.
+        sys.stderr.write(self.command + " " + urlsplit(self.path).path + "\n")
+
     def _json(self, data, status=200):
         payload = json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
         self.send_response(status)
@@ -86,13 +106,27 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/")
         manager = self.server.manager
         query = parse_qs(parsed.query)
-        if method == "GET" and path == "/api/iot/info":
+        if method == "GET" and path == "/api/iot/ewelink/status":
+            self._json(manager.ewelink_adapter.client.status())
+        elif method == "GET" and path == "/api/iot/ewelink/login":
+            self._json({"url":manager.ewelink_adapter.client.login()})
+        elif method == "GET" and path == "/api/iot/ewelink/devices":
+            self._json({"devices":manager.ewelink_adapter.client.devices()})
+        elif method == "POST" and path == "/api/iot/ewelink/import":
+            body=self._body()
+            if set(body)!={"device_id"}:raise IoTError("Vyber zařízení eWeLink.")
+            candidate=next((x for x in manager.ewelink_adapter.client.devices() if x['device_id']==body['device_id']),None)
+            if candidate is None:raise IoTError("Zařízení není v připojeném účtu.")
+            self._json({"ok":True,"module":manager.add_module({"driver":"sonoff_ewelink","name":candidate['name'],"room":candidate['room'],"device_id":candidate['device_id']})},201)
+        elif method == "GET" and path == "/api/iot/info":
             self._json({"dashboard_url": os.environ.get("HANZHUB_DASHBOARD_URL", "http://192.168.1.3:4001"),
-                        "service": "hanzhub_iot"})
+                        "service": "hanzhub_iot", "access": self.access_mode,
+                        "can_manage": self.access_mode == "lan"})
         elif method == "GET" and path == "/api/iot/health":
             self._json({"ok": True, "service": "hanzhub_iot", "port": self.server.server_port})
         elif method == "GET" and path == "/api/iot/devices":
-            self._json({"devices": manager.list_modules(), "drivers": DRIVERS})
+            self._json({"devices": manager.list_modules(), "drivers": DRIVERS,
+                        "access": self.access_mode, "can_manage": self.access_mode == "lan"})
         elif method == "GET" and path == "/api/iot/candidates":
             self._json({"candidates": manager.candidates()})
         elif method == "GET" and path == "/api/iot/panel":
@@ -106,10 +140,14 @@ class Handler(BaseHTTPRequestHandler):
                 raise IoTError("Import očekává prázdný objekt.")
             self._json({"ok": True, **manager.import_source()})
         else:
-            match = re.fullmatch(r"/api/iot/devices/([a-f0-9]{12})(?:/(state|command))?", path)
+            match = re.fullmatch(
+                r"/api/iot/devices/([a-f0-9]{12})(?:/(state|command|schedule|presets)(?:/([a-f0-9]{12}))?)?",
+                path)
             if not match:
                 raise IoTError("Endpoint nenalezen.", 404, "not_found")
-            module_id, action = match.groups()
+            module_id, action, extra = match.groups()
+            if extra and action != "schedule":
+                raise IoTError("Endpoint nenalezen.", 404, "not_found")
             if method == "GET" and action == "state":
                 self._json({"state": manager.state(module_id, fresh=query.get("fresh") == ["1"])})
             elif method == "GET" and action is None:
@@ -121,11 +159,41 @@ class Handler(BaseHTTPRequestHandler):
             elif method == "DELETE" and action is None:
                 manager.delete_module(module_id)
                 self._json({"ok": True})
+            elif method == "GET" and action == "schedule" and not extra:
+                self._json(manager.schedule_view(module_id))
+            elif method == "POST" and action == "schedule" and not extra:
+                self._json({"ok": True, "rule": manager.create_rule(module_id, self._body())}, 201)
+            elif method == "PUT" and action == "schedule" and extra:
+                self._json({"ok": True, "rule": manager.update_rule(module_id, extra, self._body())})
+            elif method == "DELETE" and action == "schedule" and extra:
+                manager.delete_rule(module_id, extra)
+                self._json({"ok": True})
+            elif method == "GET" and action == "presets":
+                self._json(manager.presets(module_id))
+            elif method == "PUT" and action == "presets":
+                self._json({"ok": True, **manager.set_presets(module_id, self._body())})
             else:
                 raise IoTError("Metoda není podporovaná.", 405, "method_not_allowed")
 
     def _dispatch(self, method):
-        path = urlsplit(self.path).path
+        parsed = urlsplit(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+        if method == "GET" and path == "/" and ("code" in query or "state" in query):
+            if request_access(self) is None:
+                self._json({"error":"Přihlas se k HanzHubu."},403)
+                return
+            try:
+                self.server.manager.ewelink_adapter.client.callback(query)
+                location="/?ewelink=connected"
+            except IoTError:
+                location="/?ewelink=error"
+            self.send_response(303)
+            self.send_header("Location",location)
+            self.send_header("Cache-Control","no-store")
+            self.send_header("Content-Length","0")
+            self.end_headers()
+            return
         if not path.startswith("/api/iot"):
             if method != "GET" or path not in ASSETS:
                 self._json({"error": "Stránka nenalezena."}, 404)
@@ -143,9 +211,14 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        if not allowed_request(self):
-            self._json({"error": "Ovládání a správa IoT jsou dostupné z domácí sítě.",
-                        "code": "lan_only"}, 403)
+        self.access_mode = request_access(self)
+        if self.access_mode is None:
+            self._json({"error": "Připoj se z domácí sítě nebo se přihlas přes Cloudflare Access. Vzdálené ovládání musí být povolené na serveru.",
+                        "code": "access_required" if self.server.remote_access.enabled else "lan_only"}, 403)
+            return
+        if self.access_mode == "remote" and not remote_route_allowed(method, path.rstrip("/")):
+            self._json({"error": "Správa modulů je dostupná pouze z domácí sítě. Ovládání zařízení je povolené.",
+                        "code": "management_lan_only"}, 403)
             return
         try:
             self._route_api(method)
@@ -158,6 +231,29 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "Požadavek nelze dokončit.", "code": "internal_error"}, 500)
 
     def do_GET(self):
+        # A credential-free, read-only availability probe for the public IoT page.
+        # CORS is granted only here, never for device data or management APIs.
+        if urlsplit(self.path).path == "/api/iot/lan-check":
+            origin = self.headers.get("Origin", "")
+            host = self.headers.get("Host", "")
+            direct = (internal_ip(self.client_address[0])
+                      and host in ("192.168.1.3:4011", "127.0.0.1:4011", "localhost:4011")
+                      and not any(self.headers.get(h) for h in
+                                  ("CF-Connecting-IP", "X-Forwarded-For", "Cf-Access-Jwt-Assertion")))
+            if not direct or origin not in ("", "https://iot.hanzhub.cz"):
+                self._json({"error": "Local probe only."}, 403)
+                return
+            payload = b'{"service":"hanzhub_iot","lan":true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Vary", "Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         self._dispatch("GET")
 
     def do_POST(self):
@@ -212,16 +308,18 @@ def register_dashboard():
     print("Automatické přidání IoT karty se nepodařilo. Použijte instalaci integrace dashboardu.", flush=True)
 
 
-def make_server(host="0.0.0.0", port=4011, manager=None):
+def make_server(host="0.0.0.0", port=4011, manager=None, remote_access=None):
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     server.manager = manager or IoTManager()
+    server.remote_access = remote_access if remote_access is not None else RemoteAccess.from_env()
     return server
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("HANZHUB_IOT_PORT", "4011"))
     server = make_server(port=port)
+    server.manager.start_scheduler()
     threading.Thread(target=register_dashboard, daemon=True).start()
     print(f"HanzHub IoT: 0.0.0.0:{port}", flush=True)
     server.serve_forever()

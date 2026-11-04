@@ -1,2 +1,4 @@
 tinytuya==1.20.0
 python-kasa==0.11.0.1
+tzdata==2025.2
+PyJWT[crypto]==2.15.1

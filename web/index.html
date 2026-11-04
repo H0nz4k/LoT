@@ -8,8 +8,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="iot.css?v=1.1.1">
-  <script src="iot.js?v=1.1.1" defer></script>
+  <link rel="stylesheet" href="iot.css?v=1.2.0">
+  <script src="iot.js?v=1.2.3" defer></script>
+  <script src="ewelink.js?v=2" defer></script>
 </head>
 <body>
   <svg class="svg-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -37,22 +38,28 @@
     <div class="toolbar">
       <div class="view-tabs" role="tablist" aria-label="Zobrazení IoT">
         <button id="controlTab" role="tab" aria-selected="true" aria-controls="controlView">Ovládání</button>
-        <button id="manageTab" role="tab" aria-selected="false" aria-controls="manageView">Správa modulů</button>
+        <button id="manageTab" role="tab" aria-selected="false" aria-controls="manageView" hidden>Správa modulů</button>
       </div>
       <div class="summary" id="summary" aria-live="polite">Načítám moduly…</div>
       <div class="heading-actions">
         <button class="btn" id="refreshBtn"><svg><use href="#icon-refresh"/></svg>Obnovit</button>
-        <button class="btn btn-primary" id="addBtn"><span class="plus">+</span>Přidat modul</button>
+        <button class="btn btn-primary" id="addBtn" hidden><span class="plus">+</span>Přidat modul</button>
       </div>
     </div>
 
+    <details class="panel" id="ewelinkBox" style="margin:16px 0;padding:14px 18px">
+      <summary style="cursor:pointer">Sonoff / eWeLink</summary>
+      <p id="ewelinkStatus" class="subtle" role="status">Ověřuji připojení…</p>
+      <button class="btn" type="button" id="ewelinkConnect">Připojit účet eWeLink</button>
+      <div id="ewelinkDevices" style="margin-top:12px"></div>
+    </details>
     <div id="pageError" class="notice error" role="alert" hidden></div>
     <section id="controlView" class="control-layout" role="tabpanel" aria-labelledby="controlTab">
       <aside class="module-sidebar">
         <div class="sidebar-heading"><h2>Moje zařízení</h2><span id="moduleCount" class="count">0</span></div>
         <label class="search"><span class="sr-only">Hledat zařízení nebo místnost</span><input id="searchInput" type="search" placeholder="Hledat zařízení nebo místnost…"></label>
         <div id="moduleList" class="module-list"><div class="empty small">Načítám zařízení…</div></div>
-        <div class="sidebar-footer"><span class="connection-dot"></span>Lokální ovládání přes HanzHub</div>
+        <div class="sidebar-footer"><span class="connection-dot"></span><span id="accessMode">Ověřuji přístup…</span></div>
       </aside>
       <div class="control-column">
         <section id="controller" class="controller" aria-label="Ovládání vybraného zařízení"><div class="empty">Vyber zařízení k ovládání.</div></section>
@@ -63,7 +70,7 @@
     <section id="manageView" class="panel manage-panel" role="tabpanel" aria-labelledby="manageTab" hidden>
       <div class="section-heading"><div><h2>Správa modulů</h2><p class="subtle">Názvy, místnosti a připojení zařízení.</p></div><button class="btn" id="importBtn">Načíst z TinyTuya</button></div>
       <div class="table-wrap"><table><thead><tr><th>Modul</th><th>Místnost</th><th>Připojení</th><th>Stav</th><th><span class="sr-only">Akce</span></th></tr></thead><tbody id="managementTable"></tbody></table></div>
-      <div class="management-note">Podporováno: infrapanel BOT IPH2, spínače Tuya a zásuvka TP-Link Tapo P110M.</div>
+      <div class="management-note">Podporováno: infrapanel BOT IPH2, spínače Tuya a zásuvka TP-Link Tapo P110M a Sonoff přes eWeLink.</div>
     </section>
 
     <footer class="footer"><a href="index.html" data-dashboard>HanzHub</a><span>·</span><span id="versionFooter">—</span><span>·</span>IoT moduly</footer>
@@ -76,7 +83,7 @@
       <div class="form-grid">
         <label>Název<input name="name" maxlength="80" placeholder="Např. infrapanel v obýváku" required></label>
         <label>Místnost<input name="room" maxlength="80" placeholder="Např. obývací pokoj"></label>
-        <label class="full">Typ modulu<select name="driver"><option value="bot_iph2">Infrapanel BOT IPH2</option><option value="tuya_switch">Spínač / zásuvka Tuya</option><option value="tapo_p110m">TP-Link Tapo P110M</option></select></label>
+        <label class="full">Typ modulu<select name="driver"><option value="bot_iph2">Infrapanel BOT IPH2</option><option value="tuya_switch">Spínač / zásuvka Tuya</option><option value="tapo_p110m">TP-Link Tapo P110M</option><option value="sonoff_ewelink">Sonoff S60TPF / eWeLink</option></select></label>
       </div>
       <div id="sourceSection" class="source-section">
         <div class="source-tabs"><label><input type="radio" name="sourceMode" value="import" checked> Z TinyTuya</label><label><input type="radio" name="sourceMode" value="manual"> Ručně</label></div>
@@ -112,6 +119,46 @@
       <label>Doba odpočtu<select id="timerHours" name="hours"></select></label>
       <div id="timerError" class="notice error" role="alert" hidden></div>
       <div class="dialog-actions"><button type="button" class="btn" data-close="timerDialog">Zrušit</button><button type="submit" class="btn btn-primary" id="saveTimerBtn">Nastavit</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="presetDialog" class="small-dialog" aria-labelledby="presetTitle">
+    <form id="presetForm"><div class="dialog-heading"><h2 id="presetTitle">Rychlé volby teploty</h2><button type="button" class="close-btn" data-close="presetDialog" aria-label="Zavřít">×</button></div>
+      <p class="subtle">Tři tlačítka nastaví požadovanou teplotu. Stejné hodnoty jsou i na infopanelu.</p>
+      <div class="preset-edit">
+        <label>Volba 1<input id="preset0" name="preset0" type="number" min="0" max="37" step="1" required></label>
+        <label>Volba 2<input id="preset1" name="preset1" type="number" min="0" max="37" step="1" required></label>
+        <label>Volba 3<input id="preset2" name="preset2" type="number" min="0" max="37" step="1" required></label>
+      </div>
+      <div id="presetError" class="notice error" role="alert" hidden></div>
+      <div class="dialog-actions"><button type="button" class="btn" data-close="presetDialog">Zrušit</button><button type="submit" class="btn btn-primary" id="savePresetBtn">Uložit</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="ruleDialog" aria-labelledby="ruleTitle">
+    <form id="ruleForm"><div class="dialog-heading"><h2 id="ruleTitle">Přidat pravidlo</h2><button type="button" class="close-btn" data-close="ruleDialog" aria-label="Zavřít">×</button></div>
+      <p class="subtle">V okně se panel zapne a nastaví cíl. Po konci se vypne, pokud zrovna neplatí jiné pravidlo. Čas je pražský.</p>
+      <div class="day-range">
+        <label>Rozsah od<select id="rangeFrom"></select></label>
+        <label>do<select id="rangeTo"></select></label>
+        <button type="button" class="btn btn-sm" id="applyRange">Vybrat rozsah</button>
+      </div>
+      <div class="day-picks" id="dayPicks" role="group" aria-label="Dny v týdnu">
+        <button type="button" data-day="0" aria-pressed="false">Po</button>
+        <button type="button" data-day="1" aria-pressed="false">Út</button>
+        <button type="button" data-day="2" aria-pressed="false">St</button>
+        <button type="button" data-day="3" aria-pressed="false">Čt</button>
+        <button type="button" data-day="4" aria-pressed="false">Pá</button>
+        <button type="button" data-day="5" aria-pressed="false">So</button>
+        <button type="button" data-day="6" aria-pressed="false">Ne</button>
+      </div>
+      <div class="form-grid">
+        <label>Začátek<input id="ruleStart" name="start" type="time" required></label>
+        <label>Konec<input id="ruleEnd" name="end" type="time" required></label>
+        <label>Cílová teplota<input id="ruleTemp" name="target" type="number" min="0" max="37" step="1" inputmode="numeric" required placeholder="°C"></label>
+      </div>
+      <div id="ruleError" class="notice error" role="alert" hidden></div>
+      <div class="dialog-actions"><button type="button" class="btn" data-close="ruleDialog">Zrušit</button><button type="submit" class="btn btn-primary" id="saveRuleBtn">Uložit pravidlo</button></div>
     </form>
   </dialog>
 

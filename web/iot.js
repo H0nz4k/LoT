@@ -1,9 +1,11 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
+const DAY_NAMES = ['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'];
 const app = {modules: [], selected: null, busy: false, loading: false, epoch: 0,
   pendingTemp: null, tempTimer: null, editing: null, candidates: [], dialogModule: null,
-  formBusy: false, controllerId: null, toastTimer: null};
+  formBusy: false, controllerId: null, toastTimer: null, presets: [17, 19, 21],
+  schedule: null, editingRule: null, ruleDays: new Set(), canManage: false, accessMode: null};
 try { app.selected = localStorage.getItem('hanzhub-iot-selected'); } catch (_) {}
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => `<svg aria-hidden="true"><use href="#icon-${name}"/></svg>`;
@@ -73,9 +75,11 @@ function controllerMarkup(module) {
   return `<div class="device-header"><div><h2 id="deviceName"></h2><p class="device-meta" id="deviceMeta"></p></div><div class="device-header-actions"><span id="powerBadge" class="power-badge"></span><button class="icon-btn" data-action="edit" title="Upravit modul" aria-label="Upravit modul">${icon('edit')}</button></div></div>
     <div id="deviceNotice" class="notice error device-notice" role="alert" hidden></div>
     ${heater ? `<div class="gauge"><svg viewBox="0 0 330 258" aria-hidden="true"><defs><linearGradient id="gaugeGradient" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#fbbf24"/><stop offset="1" stop-color="#f97316"/></linearGradient></defs><path class="gauge-track" d="M63 225 A134 134 0 1 1 267 225" pathLength="100"/><path id="gaugeProgress" class="gauge-progress" d="M63 225 A134 134 0 1 1 267 225" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"/></svg><div class="gauge-values"><div class="gauge-label">Požadovaná teplota</div><div class="target-temperature"><strong id="targetValue">—</strong><span>°C</span></div><div class="current-reading">${icon('temp')}Aktuálně <strong id="currentValue">—</strong></div></div><span class="gauge-min">0 °C</span><span class="gauge-max">37 °C</span></div>
-    <div class="temp-controls"><button id="tempMinus" class="temp-step" data-action="minus" aria-label="Snížit cílovou teplotu">−</button><input id="targetRange" type="range" min="0" max="37" step="1" aria-label="Cílová teplota v °C"><button id="tempPlus" class="temp-step" data-action="plus" aria-label="Zvýšit cílovou teplotu">+</button></div><div id="tempFeedback" class="temperature-feedback" role="status"></div>` : tapo ? `<div id="switchDisplay" class="switch-display meter-display">${icon('plug')}<p>Aktuální příkon</p><div class="power-reading"><strong id="powerValue">—</strong><span>W</span></div><span id="switchState" class="plug-state">—</span></div>
+    <div class="temp-controls"><button id="tempMinus" class="temp-step" data-action="minus" aria-label="Snížit cílovou teplotu">−</button><input id="targetRange" type="range" min="0" max="37" step="1" aria-label="Cílová teplota v °C"><button id="tempPlus" class="temp-step" data-action="plus" aria-label="Zvýšit cílovou teplotu">+</button></div><div id="tempFeedback" class="temperature-feedback" role="status"></div>
+    <div class="preset-block"><div class="preset-heading"><span>Rychlé volby</span><button type="button" class="text-action" data-action="edit-presets">Upravit</button></div><div class="preset-row" id="presetRow"></div></div>` : tapo ? `<div id="switchDisplay" class="switch-display meter-display">${icon('plug')}<p>Aktuální příkon</p><div class="power-reading"><strong id="powerValue">—</strong><span>W</span></div><span id="switchState" class="plug-state">—</span></div>
     <div class="energy-readings"><div><span>Dnes</span><strong id="energyToday">—</strong><small>kWh</small></div><div><span>Tento měsíc</span><strong id="energyMonth">—</strong><small>kWh</small></div><div><span>Napětí</span><strong id="voltageValue">—</strong><small>V</small></div><div><span>Proud</span><strong id="currentAmps">—</strong><small>A</small></div></div><p id="energyNotice" class="meter-help"></p>` : `<div id="switchDisplay" class="switch-display">${icon('bulb')}<h3 id="switchState">—</h3><p>Stav spínače</p></div>`}
     <div class="device-controls ${heater ? '' : 'switch-controls'}"><button id="powerButton" class="control-button" data-action="power">${icon('power')}<strong id="powerAction">Zapnutí</strong><small id="powerText">—</small></button>${heater ? `<button id="lockButton" class="control-button" data-action="lock">${icon('lock')}<strong>Dětský zámek</strong><small id="lockText">—</small></button><button id="timerButton" class="control-button" data-action="timer">${icon('clock')}<strong>Časovač</strong><small id="timerText">—</small></button>` : ''}</div>
+    ${heater ? `<section class="schedule-panel" id="schedulePanel" aria-label="Plánovač"><div class="section-heading"><h2>Plánovač</h2><button type="button" class="btn btn-sm" data-action="add-rule">Přidat pravidlo</button></div><p id="scheduleNow" class="subtle">Načítám plán…</p><div id="scheduleList"></div><p class="subtle schedule-hint">Po konci okna se panel vypne, pokud zrovna neplatí jiné pravidlo. Čas je pražský.</p></section>` : ''}
     <div class="device-footer"><span id="lastObserved">Čekám na stav…</span><button data-action="refresh">${icon('refresh')}Načíst stav</button></div>`;
 }
 function updateController() {
@@ -83,11 +87,12 @@ function updateController() {
   if (!m) {
     app.controllerId = null;
     $('controller').classList.remove('is-on', 'is-plug');
-    $('controller').innerHTML = `<div class="empty"><span class="empty-icon">${icon('grid')}</span><strong>Začni prvním modulem</strong><p>Přidej zařízení a ovládej jej z HanzHubu.</p><button class="btn btn-primary" data-action="add">+ Přidat modul</button></div>`;
+    $('controller').innerHTML = `<div class="empty"><span class="empty-icon">${icon('grid')}</span><strong>${app.canManage ? 'Začni prvním modulem' : 'Žádné zařízení k ovládání'}</strong><p>${app.canManage ? 'Přidej zařízení a ovládej jej z HanzHubu.' : 'Přidání a správa zařízení jsou dostupné z domácí sítě.'}</p>${app.canManage ? '<button class="btn btn-primary" data-action="add">+ Přidat modul</button>' : ''}</div>`;
     return;
   }
   const templateId = `${m.id}:${m.driver}`;
   if (app.controllerId !== templateId) { $('controller').innerHTML = controllerMarkup(m); app.controllerId = templateId; }
+  $('controller').querySelector('[data-action="edit"]').hidden = !app.canManage;
   const s = m.state, online = !!(m.enabled && s?.online), ready = online && !app.busy;
   const target = online ? app.pendingTemp ?? s.target_temp_c : null;
   $('deviceName').textContent = m.name;
@@ -111,10 +116,16 @@ function updateController() {
     $('lockButton').disabled = !ready; $('timerButton').disabled = !ready;
     $('lockButton').classList.toggle('active', online && s.locked);
     $('lockText').textContent = online ? s.locked ? 'Zamčeno' : 'Odemčeno' : '—';
-    $('timerText').textContent = online ? s.timer_minutes ? `Zbývá ${s.timer_minutes} min` : 'Bez odpočtu' : '—';
+    $('timerText').textContent = online ? Number.isInteger(s.timer_minutes) ? s.timer_minutes ? `Zbývá ${s.timer_minutes} min` : 'Bez odpočtu' : 'Stav odpočtu neznámý' : '—';
     $('timerButton').classList.toggle('active', online && s.timer_minutes > 0);
     $('tempFeedback').classList.toggle('pending', app.pendingTemp !== null);
     $('tempFeedback').textContent = app.pendingTemp !== null ? app.busy ? 'Ukládám teplotu…' : 'Za okamžik uložím nový cíl…' : app.busy ? 'Odesílám příkaz…' : online ? 'Cílová teplota · změny se uloží automaticky' : 'Teplota bude dostupná po připojení.';
+    renderPresets(ready, target);
+    paintSchedule();
+    const addRule = document.querySelector('[data-action="add-rule"]');
+    if (addRule) addRule.disabled = app.busy;
+    const editPresets = document.querySelector('[data-action="edit-presets"]');
+    if (editPresets) editPresets.disabled = app.busy;
   } else {
     $('switchDisplay').classList.toggle('on', online && s.power);
     $('switchDisplay').classList.toggle('off', online && !s.power);
@@ -131,28 +142,97 @@ function updateController() {
   $('lastObserved').textContent = s?.checked_at ? `Poslední načtení ${timeLabel(s.checked_at)}` : 'Čekám na stav…';
   $('controller').querySelectorAll('[data-action="edit"],[data-action="refresh"]').forEach(b => { b.disabled = app.busy; });
 }
-function render() { summary(); renderList(); renderManagement(); updateController(); }
+function applyPermissions() {
+  for (const id of ['manageTab', 'addBtn', 'importBtn']) $(id).hidden = !app.canManage;
+  document.querySelectorAll('[data-action="edit-presets"], [data-action="add-rule"], [data-rule-edit], [data-rule-delete]').forEach(button => { button.hidden = !app.canManage; });
+  if (!app.canManage) changeView(false);
+  const label = document.getElementById('accessMode');
+  if (label) label.textContent = app.accessMode === 'remote'
+    ? 'Vzdálené ovládání přes Cloudflare Access' : 'Lokální ovládání přes HanzHub';
+}
+function render() { summary(); renderList(); renderManagement(); updateController(); applyPermissions(); }
 function clearPending() { clearTimeout(app.tempTimer); app.tempTimer = null; app.pendingTemp = null; }
+function dayLabel(days) {
+  const set = [...days].filter(day => day >= 0 && day <= 6).sort((a, b) => a - b);
+  const consecutive = set.length > 1 && set.every((day, index) => index === 0 || day === set[index - 1] + 1);
+  if (consecutive) return `${DAY_NAMES[set[0]]}–${DAY_NAMES[set[set.length - 1]]}`;
+  return set.map(day => DAY_NAMES[day]).join(', ');
+}
+function renderPresets(ready = false, target = null) {
+  const row = $('presetRow');
+  if (!row) return;
+  const temps = app.presets?.length === 3 ? app.presets : [17, 19, 21];
+  row.innerHTML = temps.map((temp, index) => `<button type="button" class="preset-btn${ready && temp === target ? ' selected' : ''}" data-preset="${index}" ${ready ? '' : 'disabled'}>${temp} °C</button>`).join('');
+}
+function paintSchedule() {
+  const now = $('scheduleNow'), list = $('scheduleList');
+  if (!now || !list) return;
+  const view = app.schedule;
+  if (!view) { now.textContent = 'Načítám plán…'; list.innerHTML = ''; return; }
+  now.textContent = view.active
+    ? `Teď platí: ${dayLabel(view.active.days)} ${view.active.start}–${view.active.end}, ${view.active.target_temp_c} °C.`
+    : 'Teď žádné pravidlo neplatí.';
+  list.innerHTML = view.rules.map(rule => `<div class="schedule-rule${view.active?.id === rule.id ? ' active' : ''}"><div><strong>${esc(dayLabel(rule.days))} ${esc(rule.start)}–${esc(rule.end)}</strong><span>${esc(rule.target_temp_c)} °C</span></div><div class="table-actions"><button type="button" class="btn btn-sm" data-rule-edit="${esc(rule.id)}" ${app.busy ? 'disabled' : ''}>Upravit</button><button type="button" class="btn btn-sm btn-danger" data-rule-delete="${esc(rule.id)}" ${app.busy ? 'disabled' : ''}>Smazat</button></div></div>`).join('')
+    || '<p class="subtle">Zatím žádné pravidlo. Prázdný plánovač panel nezapíná.</p>';
+  applyPermissions();
+}
+function renderDayPicks() {
+  document.querySelectorAll('#dayPicks [data-day]').forEach(button => {
+    const on = app.ruleDays.has(Number(button.dataset.day));
+    button.setAttribute('aria-pressed', String(on));
+    button.classList.toggle('selected', on);
+  });
+}
+async function loadPresets(id) {
+  try {
+    const data = await api(`/devices/${id}/presets`);
+    if (app.selected !== id || !Array.isArray(data.temps) || data.temps.length !== 3) return;
+    app.presets = data.temps;
+    render();
+  } catch (_) {}
+}
+async function loadSchedule(id) {
+  const module = app.modules.find(item => item.id === id);
+  if (!module || module.driver !== 'bot_iph2') return;
+  try {
+    const data = await api(`/devices/${id}/schedule`);
+    if (app.selected !== id) return;
+    app.schedule = data;
+    paintSchedule();
+  } catch (_) {
+    if (app.selected === id && $('scheduleNow')) $('scheduleNow').textContent = 'Plán se nepodařilo načíst.';
+  }
+}
+function loadHeaterExtras() {
+  const module = current();
+  if (!module || module.driver !== 'bot_iph2') { app.schedule = null; return; }
+  loadPresets(module.id);
+  loadSchedule(module.id);
+}
 function selectModule(id) {
   if (app.busy) return;
-  clearPending(); app.selected = id;
+  clearPending(); app.selected = id; app.schedule = null; app.presets = [17, 19, 21];
   try { localStorage.setItem('hanzhub-iot-selected', id); } catch (_) {}
-  render(); loadEvents();
+  render(); loadEvents(); loadHeaterExtras();
 }
 async function loadModules() {
   if (app.loading) return;
   app.loading = true;
   try {
     const data = await api('/devices');
+    if (typeof data.can_manage === 'boolean') {
+      app.canManage = data.can_manage;
+      app.accessMode = data.access;
+    }
     const old = new Map(app.modules.map(m => [m.id, m]));
     app.modules = data.devices.map(m => {
       const previous = old.get(m.id);
       return {...m, state:m.state || (previous?.updated_at === m.updated_at ? previous.state : null)};
     });
     if (!current()) app.selected = app.modules[0]?.id ?? null;
-    showError('pageError', ''); render(); loadEvents();
+    showError('pageError', ''); render(); loadEvents(); loadHeaterExtras();
   } catch (error) {
-    showError('pageError', error.code === 'lan_only' ? error.message : 'IoT služba není dostupná. Zkontroluj, že běží na HanzHubu.');
+    showError('pageError', ['lan_only','access_required','management_lan_only'].includes(error.code) ? error.message : 'IoT služba není dostupná. Zkontroluj přihlášení a spojení s HanzHubem.');
     $('summary').textContent = 'Spojení se službou není dostupné';
   } finally { app.loading = false; }
 }
@@ -216,6 +296,7 @@ function queueTemperature(value) {
 }
 
 function changeView(manage) {
+  if (manage && !app.canManage) return;
   $('controlView').hidden = manage; $('manageView').hidden = !manage;
   $('controlTab').setAttribute('aria-selected', String(!manage));
   $('manageTab').setAttribute('aria-selected', String(manage));
@@ -223,6 +304,14 @@ function changeView(manage) {
 function sourceMode() { return app.editing ? 'manual' : document.querySelector('[name="sourceMode"]:checked').value; }
 function updateFormFields() {
   const form = $('moduleForm'), tapo = form.elements.driver.value === 'tapo_p110m';
+  if (form.elements.driver.value === 'sonoff_ewelink') {
+    $('moduleDialog').close();
+    const box = $('ewelinkBox'); box.open = true;
+    box.scrollIntoView({block:'center', behavior:'smooth'});
+    box.querySelector('summary').focus();
+    toast('Sonoff S60TPF vyber v sekci Sonoff / eWeLink. Již přidaná zásuvka je označená „Přidáno“.');
+    return;
+  }
   const manual = !tapo && sourceMode() === 'manual';
   $('sourceSection').hidden = !!app.editing || tapo;
   $('tuyaVersionLabel').hidden = tapo;
@@ -240,7 +329,7 @@ function updateFormFields() {
   $('powerDpLabel').hidden = form.elements.driver.value !== 'tuya_switch';
 }
 async function openModule(id = null) {
-  if (app.busy || app.formBusy) return;
+  if (!app.canManage || app.busy || app.formBusy) return;
   clearPending(); updateController();
   const form = $('moduleForm'); form.reset(); form.elements.driver.disabled = false;
   app.editing = id; app.candidates = [];
@@ -253,6 +342,7 @@ async function openModule(id = null) {
   if (id) {
     const module = app.modules.find(m => m.id === id);
     if (!module) return;
+    if(module.driver==='sonoff_ewelink'){toast('Sonoff je připojený přes eWeLink. Název a místnost se načítají při přidání.');return;}
     for (const field of ['name','room','driver','ip','version','device_id','mac','power_dp']) form.elements[field].value = module[field] ?? '';
     form.elements.version.value = module.driver === 'tapo_p110m' ? '3.4' : module.version;
     form.elements.driver.disabled = module.driver === 'tapo_p110m';
@@ -309,6 +399,95 @@ async function submitModule(event) {
   } catch (error) { showError('formError', error.message); }
   finally { app.formBusy = false; $('saveModuleBtn').disabled = false; }
 }
+function openPresets() {
+  if (!app.canManage) return;
+  const temps = app.presets?.length === 3 ? app.presets : [17, 19, 21];
+  temps.forEach((temp, index) => { $(`preset${index}`).value = temp; });
+  showError('presetError', '');
+  $('presetDialog').showModal();
+}
+async function submitPresets(event) {
+  event.preventDefault();
+  if (!app.canManage) return;
+  if (app.formBusy || !current() || current().driver !== 'bot_iph2') return;
+  const temps = [0, 1, 2].map(index => Number($(`preset${index}`).value));
+  if (temps.some(temp => !Number.isInteger(temp) || temp < 0 || temp > 37)) {
+    showError('presetError', 'Každá volba musí být celé číslo 0–37 °C.');
+    return;
+  }
+  app.formBusy = true; $('savePresetBtn').disabled = true; showError('presetError', '');
+  try {
+    const data = await api(`/devices/${app.selected}/presets`, jsonRequest('PUT', {temps}));
+    app.presets = data.temps;
+    $('presetDialog').close();
+    toast('Rychlé volby uloženy.');
+    render();
+  } catch (error) { showError('presetError', error.message); }
+  finally { app.formBusy = false; $('savePresetBtn').disabled = false; }
+}
+function openRule(ruleId = null) {
+  if (!app.canManage) return;
+  const module = current();
+  if (!module || module.driver !== 'bot_iph2' || app.busy) return;
+  const rule = ruleId ? app.schedule?.rules?.find(item => item.id === ruleId) : null;
+  if (ruleId && !rule) return;
+  app.editingRule = rule ? rule.id : null;
+  app.ruleDays = new Set(rule ? rule.days : []);
+  $('ruleTitle').textContent = rule ? 'Upravit pravidlo' : 'Přidat pravidlo';
+  $('ruleStart').value = rule ? rule.start : '';
+  $('ruleEnd').value = rule ? rule.end : '';
+  $('ruleTemp').value = rule ? rule.target_temp_c : '';
+  $('rangeFrom').value = '0'; $('rangeTo').value = '4';
+  renderDayPicks();
+  showError('ruleError', '');
+  $('ruleDialog').showModal();
+}
+function applyDayRange() {
+  const from = Number($('rangeFrom').value), to = Number($('rangeTo').value);
+  const days = [];
+  let day = from;
+  for (let index = 0; index < 7; index += 1) {
+    days.push(day);
+    if (day === to) break;
+    day = (day + 1) % 7;
+  }
+  app.ruleDays = new Set(days);
+  renderDayPicks();
+}
+async function submitRule(event) {
+  event.preventDefault();
+  if (!app.canManage) return;
+  if (app.formBusy || !current() || current().driver !== 'bot_iph2') return;
+  const days = [...app.ruleDays].sort((a, b) => a - b);
+  const target = Number($('ruleTemp').value);
+  if (!days.length) { showError('ruleError', 'Vyberte alespoň jeden den, nebo použijte rozsah.'); return; }
+  if (!Number.isInteger(target) || target < 0 || target > 37) {
+    showError('ruleError', 'Cílová teplota musí být celé číslo 0–37 °C.');
+    return;
+  }
+  const body = {days, start: $('ruleStart').value, end: $('ruleEnd').value, target_temp_c: target};
+  const ruleId = app.editingRule;
+  app.formBusy = true; $('saveRuleBtn').disabled = true; showError('ruleError', '');
+  try {
+    await api(`/devices/${app.selected}/schedule${ruleId ? '/' + ruleId : ''}`, jsonRequest(ruleId ? 'PUT' : 'POST', body));
+    $('ruleDialog').close();
+    toast(ruleId ? 'Pravidlo upraveno.' : 'Pravidlo přidáno.');
+    await loadSchedule(app.selected);
+  } catch (error) { showError('ruleError', error.message); }
+  finally { app.formBusy = false; $('saveRuleBtn').disabled = false; }
+}
+async function deleteRule(ruleId) {
+  if (!app.canManage) return;
+  if (app.busy || app.formBusy || !ruleId) return;
+  const rule = app.schedule?.rules?.find(item => item.id === ruleId);
+  const label = rule ? `${dayLabel(rule.days)} ${rule.start}–${rule.end}` : 'toto pravidlo';
+  if (!window.confirm(`Smazat pravidlo ${label}?`)) return;
+  try {
+    await api(`/devices/${app.selected}/schedule/${ruleId}`, {method: 'DELETE'});
+    toast('Pravidlo smazáno.');
+    await loadSchedule(app.selected);
+  } catch (error) { toast(error.message, true); }
+}
 function openTimer() {
   const m = current(); if (!m?.state?.online || app.busy) return;
   clearPending(); updateController(); app.dialogModule = m.id;
@@ -324,6 +503,7 @@ async function submitTimer(event) {
   $('saveTimerBtn').disabled = false;
 }
 function openDelete(id) {
+  if (!app.canManage) return;
   if (app.busy || app.formBusy) return;
   clearPending(); updateController();
   const m = app.modules.find(m => m.id === id); if (!m) return;
@@ -354,6 +534,23 @@ document.addEventListener('click', event => {
   if (edit) { openModule(edit.dataset.edit); return; }
   const del = event.target.closest('[data-delete]');
   if (del) { openDelete(del.dataset.delete); return; }
+  const preset = event.target.closest('[data-preset]');
+  if (preset && !preset.disabled) {
+    const temp = app.presets?.[Number(preset.dataset.preset)];
+    queueTemperature(temp);
+    return;
+  }
+  const ruleEdit = event.target.closest('[data-rule-edit]');
+  if (ruleEdit && !ruleEdit.disabled) { openRule(ruleEdit.dataset.ruleEdit); return; }
+  const ruleDelete = event.target.closest('[data-rule-delete]');
+  if (ruleDelete && !ruleDelete.disabled) { deleteRule(ruleDelete.dataset.ruleDelete); return; }
+  const day = event.target.closest('#dayPicks [data-day]');
+  if (day) {
+    const value = Number(day.dataset.day);
+    if (app.ruleDays.has(value)) app.ruleDays.delete(value); else app.ruleDays.add(value);
+    renderDayPicks();
+    return;
+  }
   const action = event.target.closest('[data-action]'); if (!action || action.disabled) return;
   const m = current(), s = m?.state;
   switch (action.dataset.action) {
@@ -365,6 +562,8 @@ document.addEventListener('click', event => {
     case 'power': clearPending(); sendCommand('power', !s.power); break;
     case 'lock': clearPending(); sendCommand('locked', !s.locked); break;
     case 'timer': openTimer(); break;
+    case 'edit-presets': openPresets(); break;
+    case 'add-rule': openRule(); break;
   }
 });
 $('controller').addEventListener('input', event => { if (event.target.id === 'targetRange') queueTemperature(Number(event.target.value)); });
@@ -383,9 +582,12 @@ $('candidateSelect').addEventListener('change', applyCandidate);
 $('moduleForm').addEventListener('change', event => { if (['sourceMode','driver'].includes(event.target.name)) updateFormFields(); });
 $('moduleForm').addEventListener('submit', submitModule);
 $('timerForm').addEventListener('submit', submitTimer);
+$('presetForm').addEventListener('submit', submitPresets);
+$('ruleForm').addEventListener('submit', submitRule);
+$('applyRange').addEventListener('click', applyDayRange);
 $('deleteForm').addEventListener('submit', submitDelete);
 $('importBtn').addEventListener('click', async () => {
-  if (app.busy || app.formBusy) return;
+  if (!app.canManage || app.busy || app.formBusy) return;
   $('importBtn').disabled = true;
   try {
     const result = await api('/import', jsonRequest('POST', {})); app.epoch++;
@@ -401,9 +603,16 @@ $('moduleDialog').addEventListener('close', () => {
   for (const field of ['local_key','tapo_username','tapo_password']) $('moduleForm').elements[field].value = '';
 });
 $('timerHours').innerHTML = Array.from({length:25}, (_, h) => `<option value="${h}">${h} ${plural(h,'hodina','hodiny','hodin')}</option>`).join('');
+for (const select of [$('rangeFrom'), $('rangeTo')]) {
+  select.innerHTML = DAY_NAMES.map((name, index) => `<option value="${index}">${name}</option>`).join('');
+}
+$('rangeTo').value = '4';
 async function init() {
   try {
     const result = await api('/info');
+    app.canManage = result.can_manage !== false;
+    app.accessMode = result.access || 'lan';
+    applyPermissions();
     document.querySelectorAll('[data-dashboard]').forEach(a => { a.href = result.dashboard_url; });
   } catch (_) {}
   try {
@@ -413,6 +622,10 @@ async function init() {
   } catch (_) {}
   await loadModules(); await refreshStates();
   setInterval(refreshStates, 15000);
+  setInterval(() => {
+    const dialog = $('ruleDialog');
+    if (!document.hidden && !(dialog && dialog.open)) loadSchedule(app.selected);
+  }, 20000);
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStates(); });
 init();

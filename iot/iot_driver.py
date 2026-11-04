@@ -12,6 +12,7 @@ class IoTError(Exception):
 
 
 DRIVERS = {
+    "sonoff_ewelink": {"name":"Sonoff / eWeLink", "kind":"switch", "controls":["power"], "cloud":True},
     "bot_iph2": {
         "name": "Infrapanel BOT IPH2",
         "kind": "heater",
@@ -163,7 +164,7 @@ class LocalTuya:
                     "target_temp_c": check_int(dps["3"], 0, 37),
                     "current_temp_c": check_int(dps["4"], 0, 99),
                     # Countdown může číst minuty mimo násobky 60.
-                    "timer_minutes": check_int(dps["5"], 0, 1440),
+                    "timer_minutes": check_int(dps["5"], 0, 1440) if "5" in dps else None,
                     "fault_code": check_int(dps["6"], 0, 2**32 - 1),
                 })
                 if state["fault_code"] & 1:
@@ -189,7 +190,7 @@ class LocalTuya:
         state = self._state(module, self._call(device.status))
         confirmed = state[control] == value
         if control == "timer_minutes" and value > 0:
-            confirmed = 0 <= value - state[control] <= 1
+            confirmed = type(state.get(control)) is int and 0 <= value - state[control] <= 1
         if not confirmed:
             raise IoTError("Příkaz byl odeslán, ale stav nepotvrdil požadovanou změnu.",
                            502, "write_unconfirmed")
