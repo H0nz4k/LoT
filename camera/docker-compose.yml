@@ -1,0 +1,36 @@
+# Optional camera addon. Run from camera/ with docker compose up -d.
+services:
+  go2rtc:
+    image: alexxit/go2rtc:1.9.15
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./runtime/go2rtc.yaml:/config/go2rtc.yaml:ro
+    security_opt:
+      - no-new-privileges:true
+  recorder:
+    image: linuxserver/ffmpeg:latest
+    restart: unless-stopped
+    profiles: ["record"]
+    network_mode: host
+    entrypoint: ["/bin/sh", "/opt/camera/record.sh"]
+    env_file:
+      - ./runtime/camera.env
+    volumes:
+      - ./record.sh:/opt/camera/record.sh:ro
+      - ./recordings:/recordings
+    security_opt:
+      - no-new-privileges:true
+  motion:
+    image: linuxserver/ffmpeg:latest
+    restart: unless-stopped
+    profiles: ["motion"]
+    network_mode: host
+    entrypoint: ["/bin/sh", "/opt/camera/motion.sh"]
+    env_file:
+      - ./runtime/camera.env
+    volumes:
+      - ./motion.sh:/opt/camera/motion.sh:ro
+      - ./events:/events
+    security_opt:
+      - no-new-privileges:true
