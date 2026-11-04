@@ -141,7 +141,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, **manager.import_source()})
         else:
             match = re.fullmatch(
-                r"/api/iot/devices/([a-f0-9]{12})(?:/(state|command|schedule|presets)(?:/([a-f0-9]{12}))?)?",
+                r"/api/iot/devices/([a-f0-9]{12})(?:/(state|command|schedule|presets|snapshot)(?:/([a-f0-9]{12}))?)?",
                 path)
             if not match:
                 raise IoTError("Endpoint nenalezen.", 404, "not_found")
@@ -150,6 +150,15 @@ class Handler(BaseHTTPRequestHandler):
                 raise IoTError("Endpoint nenalezen.", 404, "not_found")
             if method == "GET" and action == "state":
                 self._json({"state": manager.state(module_id, fresh=query.get("fresh") == ["1"])})
+            elif method == "GET" and action == "snapshot":
+                payload = manager.snapshot(module_id)
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(payload)
             elif method == "GET" and action is None:
                 self._json({"module": manager.get_module(module_id)})
             elif method == "POST" and action == "command":
