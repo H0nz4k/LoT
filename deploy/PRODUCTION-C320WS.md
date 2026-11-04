@@ -11,7 +11,7 @@ Camera: LAN IP `192.168.1.53`, MAC `CC:BA:BD:4E:35:CC`.
 - Video recording and scene-change logging are **opt-in**, with no automatic person recognition.
 
 ## Backups and rollback
-`backup-and-deploy.sh` is a guarded starting point for the **existing production checkout** only. It builds before shutdown, stops IoT for consistent SQLite volume backup, and saves original image ID, .env and Git commit in `/var/backups/hanzhub-iot`. It must not be run until the preceding blockers are cleared. A deployment may need further adjustments for the actual HUB environment and Docker image naming.
+`backup-and-deploy.sh` deliberately refuses to deploy. The previous draft built the old checkout before switching revisions and could leave IoT stopped on backup failure; its rollback also assumed an image tag and did not account for all production mounts. A replacement must be designed and tested against the actual HUB configuration before use.
 
 To restore data after the service has stopped, review the volume name and run a one-off tar extraction using the saved archive. **Never overwrite a running SQLite database**. Verify the service and current module list after any rollback.
 
