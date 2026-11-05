@@ -63,6 +63,6 @@ def remote_route_allowed(method, path):
     if method == "GET" and path in ("/api/iot/ewelink/status", "/api/iot/ewelink/login", "/api/iot/ewelink/devices","/api/iot/info", "/api/iot/health", "/api/iot/devices",
                                     "/api/iot/panel", "/api/iot/events"):
         return True
-    if method == "GET" and re.fullmatch(r"/api/iot/devices/[a-f0-9]{12}/(state|presets|schedule)", path):
+    if method == "GET" and re.fullmatch(r"/api/iot/devices/[a-f0-9]{12}/(state|presets|schedule|snapshot)", path):
         return True
     return method == "POST" and bool(re.fullmatch(r"/api/iot/devices/[a-f0-9]{12}/command", path))

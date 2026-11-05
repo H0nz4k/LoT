@@ -7,15 +7,8 @@
     const box=document.getElementById('ewelinkBox');
     const link=document.createElement('a');link.className='btn';link.href=localURL+'#sonoff';
     link.textContent='Otevřít IoT v domácí síti';link.style.display='inline-block';link.style.marginTop='12px';box.append(link);
-    // Never carry OAuth codes, state or other public URL parameters into LAN.
-    const query=new URLSearchParams(location.search);
-    if(!query.has('code')&&!query.has('state')){
-      fetch(localURL+'api/iot/lan-check',{mode:'cors',credentials:'omit',cache:'no-store',
-        targetAddressSpace:'local',signal:AbortSignal.timeout(4000)})
-        .then(r=>r.ok?r.json():null).then(d=>{
-          if(d?.service==='hanzhub_iot'&&d.lan===true)location.replace(localURL+location.hash);
-        }).catch(()=>{});
-    }
+    // HTTPS stránka nesmí auto-volat http://LAN (mixed content + Private Network Access).
+    // Přesměrování na domácí síť zůstává jen ručním odkazem výše.
   }
   async function call(path,options){const r=await fetch('/api/iot/ewelink/'+path,{cache:'no-store',...options});const d=await r.json();if(!r.ok)throw Error(d.error||'Připojení eWeLink se nepovedlo.');return d;}
   async function load(){
