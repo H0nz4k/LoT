@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import re
+import select
+import socket
 import sqlite3
 import threading
 import time
@@ -17,6 +19,7 @@ import urllib.request
 from iot import IoTManager, PRIVATE_NETWORKS
 from iot_driver import DRIVERS, IoTError
 from access import RemoteAccess, remote_route_allowed
+from live import ensure_stream, live_upgrade_header, parse_request_head, proxy_websocket, websocket_key
 import sys
 
 WEB_DIR = Path(os.environ.get("HANZHUB_IOT_WEB_DIR", Path(__file__).resolve().parent.parent / "web"))
@@ -73,6 +76,83 @@ def allowed_request(handler):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def handle(self):
+        # WebSocket se nesmí číst přes buffered rfile: ten by spolkl rámce za hlavičkami.
+        if self._take_live_websocket():
+            return
+        super().handle()
+
+    def _peek_headers(self):
+        previous = self.connection.gettimeout()
+        self.connection.settimeout(3)
+        try:
+            data = b""
+            for _ in range(20):
+                try:
+                    data = self.connection.recv(16384, socket.MSG_PEEK)
+                except TimeoutError:
+                    break
+                if not data:
+                    return b""
+                if b"\r\n\r\n" in data:
+                    return data.split(b"\r\n\r\n", 1)[0] + b"\r\n\r\n"
+                readable, _, _ = select.select([self.connection], [], [], 1)
+                if not readable:
+                    break
+            return b""
+        except OSError:
+            return b""
+        finally:
+            self.connection.settimeout(previous)
+
+    def _recv_exact(self, size):
+        data = b""
+        while len(data) < size:
+            chunk = self.connection.recv(size - len(data))
+            if not chunk:
+                break
+            data += chunk
+        return data
+
+    def _take_live_websocket(self):
+        header = self._peek_headers()
+        if not live_upgrade_header(header):
+            return False
+        if self._recv_exact(len(header)) != header:
+            return True
+        self._serve_live_socket(header)
+        return True
+
+    def _serve_live_socket(self, raw):
+        self.request_version = "HTTP/1.1"
+        self.command = "GET"
+        try:
+            method, target, version, headers = parse_request_head(raw)
+        except IoTError as error:
+            self._json({"error": str(error), "code": error.code}, error.status)
+            return
+        self.command = method
+        self.path = target
+        self.request_version = version
+        self.headers = headers
+        if not self._reject_if_unauthorized():
+            return
+        match = re.fullmatch(r"/api/iot/devices/([a-f0-9]{12})/live", urlsplit(self.path).path.rstrip("/"))
+        if self.command != "GET" or not match:
+            self._json({"error": "Endpoint nenalezen.", "code": "not_found"}, 404)
+            return
+        try:
+            module = self.server.manager.camera_for_live(match.group(1))
+            key = websocket_key(self.headers)
+            ensure_stream(module)
+            proxy_websocket(self.connection, key, module["id"])
+        except IoTError as error:
+            self._json({"error": str(error), "code": error.code}, error.status)
+        except (sqlite3.Error, OSError):
+            self._json({"error": "Úložiště modulů není dostupné.", "code": "storage_unavailable"}, 503)
+        except Exception:
+            self._json({"error": "Požadavek nelze dokončit.", "code": "internal_error"}, 500)
+
     def log_message(self, fmt, *args):
         # Never log OAuth query parameters or application secrets.
         sys.stderr.write(self.command + " " + urlsplit(self.path).path + "\n")
@@ -141,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, **manager.import_source()})
         else:
             match = re.fullmatch(
-                r"/api/iot/devices/([a-f0-9]{12})(?:/(state|command|schedule|presets|snapshot)(?:/([a-f0-9]{12}))?)?",
+                r"/api/iot/devices/([a-f0-9]{12})(?:/(state|command|schedule|presets|snapshot|live)(?:/([a-f0-9]{12}))?)?",
                 path)
             if not match:
                 raise IoTError("Endpoint nenalezen.", 404, "not_found")
@@ -150,6 +230,10 @@ class Handler(BaseHTTPRequestHandler):
                 raise IoTError("Endpoint nenalezen.", 404, "not_found")
             if method == "GET" and action == "state":
                 self._json({"state": manager.state(module_id, fresh=query.get("fresh") == ["1"])})
+            elif method == "GET" and action == "live":
+                # Bez hlavičky Upgrade se go2rtc nevolá. WebSocket vyřizuje handle().
+                manager.camera_for_live(module_id)
+                raise IoTError("Živé video vyžaduje WebSocket.", 426, "upgrade_required")
             elif method == "GET" and action == "snapshot":
                 payload = manager.snapshot(module_id)
                 self.send_response(200)
@@ -183,6 +267,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, **manager.set_presets(module_id, self._body())})
             else:
                 raise IoTError("Metoda není podporovaná.", 405, "method_not_allowed")
+
+    def _reject_if_unauthorized(self):
+        self.access_mode = request_access(self)
+        if self.access_mode is None:
+            self._json({"error": "Připoj se z domácí sítě nebo se přihlas přes Cloudflare Access. Vzdálené ovládání musí být povolené na serveru.",
+                        "code": "access_required" if self.server.remote_access.enabled else "lan_only"}, 403)
+            return False
+        if self.access_mode == "remote" and not remote_route_allowed(self.command, urlsplit(self.path).path.rstrip("/")):
+            self._json({"error": "Správa modulů je dostupná pouze z domácí sítě. Ovládání zařízení je povolené.",
+                        "code": "management_lan_only"}, 403)
+            return False
+        return True
 
     def _dispatch(self, method):
         parsed = urlsplit(self.path)
@@ -220,14 +316,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        self.access_mode = request_access(self)
-        if self.access_mode is None:
-            self._json({"error": "Připoj se z domácí sítě nebo se přihlas přes Cloudflare Access. Vzdálené ovládání musí být povolené na serveru.",
-                        "code": "access_required" if self.server.remote_access.enabled else "lan_only"}, 403)
-            return
-        if self.access_mode == "remote" and not remote_route_allowed(method, path.rstrip("/")):
-            self._json({"error": "Správa modulů je dostupná pouze z domácí sítě. Ovládání zařízení je povolené.",
-                        "code": "management_lan_only"}, 403)
+        if not self._reject_if_unauthorized():
             return
         try:
             self._route_api(method)

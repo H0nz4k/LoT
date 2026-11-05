@@ -1,0 +1,20 @@
+# Lokální převod RTSP pro IoT. Žádné adresy kamer ani hesla — stream zakládá služba za běhu.
+# HTTP API jen na localhostu a jen pro registraci streamu a WebSocket jednoho zařízení.
+log:
+  level: error
+
+app:
+  modules: [api, ws, rtsp, webrtc, mp4]
+
+api:
+  listen: "127.0.0.1:1984"
+  allow_paths:
+    - /api/streams
+    - /api/ws
+
+rtsp:
+  listen: "127.0.0.1:8554"
+
+webrtc:
+  listen: ":8555"
+  ice_servers: []
