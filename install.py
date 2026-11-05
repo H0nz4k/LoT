@@ -55,9 +55,8 @@ def main():
             raise ValueError('TinyTuya devices.json musí obsahovat seznam zařízení.')
         run('docker', 'compose', 'version')
         run('docker', 'compose', 'config', '--quiet')
-        print('Připravuji samostatnou službu hanzhub_iot…', flush=True)
-        run('docker', 'compose', 'build', 'hanzhub_iot')
-        run('docker', 'compose', 'up', '-d', 'hanzhub_iot')
+        print('Připravuji hanzhub_iot a go2rtc…', flush=True)
+        run('docker', 'compose', 'up', '-d', '--build')
         ready = False
         for _ in range(30):
             try:

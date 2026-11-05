@@ -419,6 +419,14 @@ class IoTManager:
         with self._device_lock(module_id):
             return self.camera_adapter.snapshot(self._module(module_id))
 
+    def camera_for_live(self, module_id):
+        module = self._module(module_id)
+        if module["driver"] != "tapo_c320ws":
+            raise IoTError("Zařízení není kamera.", 404, "not_camera")
+        if not module["enabled"]:
+            raise IoTError("Kamera je pozastavená.", 409, "paused")
+        return module
+
     def command(self, module_id, command):
         module = self._module(module_id)
         control, value = validate_command(module["driver"], command)

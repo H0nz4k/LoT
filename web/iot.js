@@ -75,7 +75,7 @@ function controllerMarkup(module) {
   const camera = module.driver === 'tapo_c320ws';
   return `<div class="device-header"><div><h2 id="deviceName"></h2><p class="device-meta" id="deviceMeta"></p></div><div class="device-header-actions"><span id="powerBadge" class="power-badge"></span><button class="icon-btn" data-action="edit" title="Upravit modul" aria-label="Upravit modul">${icon('edit')}</button></div></div>
     <div id="deviceNotice" class="notice error device-notice" role="alert" hidden></div>
-    ${camera ? `<div class="camera-view"><img id="cameraSnapshot" alt="Snímek z kamery" style="width:100%;height:auto;max-height:65vh;object-fit:contain;border-radius:14px;background:#111"/><p class="subtle">Snímek obnovován po 10 sekundách (RTSP), nejde o plynulé video.</p></div>` : heater ? `<div class="gauge"><svg viewBox="0 0 330 258" aria-hidden="true"><defs><linearGradient id="gaugeGradient" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#fbbf24"/><stop offset="1" stop-color="#f97316"/></linearGradient></defs><path class="gauge-track" d="M63 225 A134 134 0 1 1 267 225" pathLength="100"/><path id="gaugeProgress" class="gauge-progress" d="M63 225 A134 134 0 1 1 267 225" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"/></svg><div class="gauge-values"><div class="gauge-label">Požadovaná teplota</div><div class="target-temperature"><strong id="targetValue">—</strong><span>°C</span></div><div class="current-reading">${icon('temp')}Aktuálně <strong id="currentValue">—</strong></div></div><span class="gauge-min">0 °C</span><span class="gauge-max">37 °C</span></div>
+    ${camera ? `<div class="camera-view"><div class="camera-stage"><video id="cameraLive" autoplay muted playsinline hidden></video><img id="cameraSnapshot" alt="Snímek z kamery"></div><div class="camera-toolbar"><button type="button" id="liveToggle" class="btn btn-sm live-toggle" data-action="live" aria-pressed="false">Živě</button><p id="cameraHint" class="subtle">Snímek se obnovuje po 10 sekundách. Živě pustí plynulé video.</p></div><p id="liveError" class="notice error" role="alert" hidden></p></div>` : heater ? `<div class="gauge"><svg viewBox="0 0 330 258" aria-hidden="true"><defs><linearGradient id="gaugeGradient" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#fbbf24"/><stop offset="1" stop-color="#f97316"/></linearGradient></defs><path class="gauge-track" d="M63 225 A134 134 0 1 1 267 225" pathLength="100"/><path id="gaugeProgress" class="gauge-progress" d="M63 225 A134 134 0 1 1 267 225" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"/></svg><div class="gauge-values"><div class="gauge-label">Požadovaná teplota</div><div class="target-temperature"><strong id="targetValue">—</strong><span>°C</span></div><div class="current-reading">${icon('temp')}Aktuálně <strong id="currentValue">—</strong></div></div><span class="gauge-min">0 °C</span><span class="gauge-max">37 °C</span></div>
     <div class="temp-controls"><button id="tempMinus" class="temp-step" data-action="minus" aria-label="Snížit cílovou teplotu">−</button><input id="targetRange" type="range" min="0" max="37" step="1" aria-label="Cílová teplota v °C"><button id="tempPlus" class="temp-step" data-action="plus" aria-label="Zvýšit cílovou teplotu">+</button></div><div id="tempFeedback" class="temperature-feedback" role="status"></div>
     <div class="preset-block"><div class="preset-heading"><span>Rychlé volby</span><button type="button" class="text-action" data-action="edit-presets">Upravit</button></div><div class="preset-row" id="presetRow"></div></div>` : tapo ? `<div id="switchDisplay" class="switch-display meter-display">${icon('plug')}<p>Aktuální příkon</p><div class="power-reading"><strong id="powerValue">—</strong><span>W</span></div><span id="switchState" class="plug-state">—</span></div>
     <div class="energy-readings"><div><span>Dnes</span><strong id="energyToday">—</strong><small>kWh</small></div><div><span>Tento měsíc</span><strong id="energyMonth">—</strong><small>kWh</small></div><div><span>Napětí</span><strong id="voltageValue">—</strong><small>V</small></div><div><span>Proud</span><strong id="currentAmps">—</strong><small>A</small></div></div><p id="energyNotice" class="meter-help"></p>` : `<div id="switchDisplay" class="switch-display">${icon('bulb')}<h3 id="switchState">—</h3><p>Stav spínače</p></div>`}
@@ -100,12 +100,24 @@ function updateController() {
   $('deviceMeta').textContent = [m.room, m.capabilities.name].filter(Boolean).join(' · ');
   if (m.driver === 'tapo_c320ws') {
     const img = $('cameraSnapshot');
-    if (online && img && (!img.dataset.next || Number(img.dataset.next) < Date.now())) {
+    const liveOn = !!(app.live && app.live.id === m.id && !app.live.closed);
+    if (online && img && !liveOn && !img.hidden && (!img.dataset.next || Number(img.dataset.next) < Date.now())) {
       img.src = `/api/iot/devices/${m.id}/snapshot?t=${Date.now()}`;
       img.dataset.next = String(Date.now() + 10000);
     }
+    const toggle = $('liveToggle');
+    if (toggle) {
+      toggle.disabled = !online;
+      toggle.setAttribute('aria-pressed', liveOn ? 'true' : 'false');
+    }
+    const hint = $('cameraHint');
+    if (hint && !($('liveError') && !$('liveError').hidden)) {
+      hint.textContent = liveOn
+        ? 'Plynulé video běží, zvuk je ztlumený. Dalším stiskem Živě se vrátíš ke snímku.'
+        : 'Snímek se obnovuje po 10 sekundách. Živě pustí plynulé video.';
+    }
     $('powerBadge').className = 'power-badge' + (online ? ' on' : '');
-    $('powerBadge').textContent = online ? 'RTSP dostupné' : statusLabel(m);
+    $('powerBadge').textContent = online ? liveOn ? 'Živě' : 'RTSP dostupné' : statusLabel(m);
     showError('deviceNotice', !m.enabled ? 'Kamera je pozastavená.' : s && !online ? s.error || 'Kamera nedostupná.' : '');
     $('lastObserved').textContent = s?.checked_at ? `Poslední kontrola ${timeLabel(s.checked_at)}` : 'Čekám na stav…';
     return;
@@ -222,8 +234,217 @@ function loadHeaterExtras() {
   loadPresets(module.id);
   loadSchedule(module.id);
 }
+function showLiveError(message) {
+  const error = $('liveError');
+  if (!error) return;
+  error.textContent = message || '';
+  error.hidden = !message;
+}
+function stopLive() {
+  const live = app.live;
+  app.live = null;
+  if (!live || live.closed) return;
+  live.closed = true;
+  clearTimeout(live.timer);
+  try { live.ws && live.ws.close(); } catch (_) {}
+  try {
+    if (live.pc) {
+      live.pc.getSenders().forEach(sender => { try { sender.track && sender.track.stop(); } catch (_) {} });
+      live.pc.close();
+    }
+  } catch (_) {}
+  if (live.video) {
+    try { live.video.pause(); } catch (_) {}
+    live.video.srcObject = null;
+    if (live.url) {
+      const url = live.url;
+      live.url = '';
+      live.video.removeAttribute('src');
+      try { URL.revokeObjectURL(url); } catch (_) {}
+    }
+    try { live.video.load(); } catch (_) {}
+  }
+}
+function mseCodecList() {
+  const Factory = window.ManagedMediaSource || window.MediaSource;
+  if (!Factory || typeof Factory.isTypeSupported !== 'function') return [];
+  return ['avc1.640029', 'avc1.64002A', 'avc1.64001F', 'avc1.4D401F', 'avc1.4D401E', 'avc1.42E01E', 'mp4a.40.2']
+    .filter(codec => Factory.isTypeSupported(`video/mp4; codecs="${codec}"`));
+}
+function startLive(module) {
+  stopLive();
+  const video = $('cameraLive');
+  const img = $('cameraSnapshot');
+  showLiveError('');
+  if (!video) return;
+  video.muted = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  const codecs = mseCodecList();
+  if (!codecs.some(codec => codec.startsWith('avc1'))) {
+    showLiveError('Tento prohlížeč neumí plynulé H.264 video. Zobrazuji snímek.');
+    return;
+  }
+  const Factory = window.ManagedMediaSource || window.MediaSource;
+  const live = {id: module.id, video, closed: false, started: false, queue: [], url: '', mseSent: false, webrtc: false};
+  const wsURL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/iot/devices/${module.id}/live`;
+  let ws;
+  try { ws = new WebSocket(wsURL); }
+  catch (_) {
+    showLiveError('Živé video se nepodařilo spojit. Zobrazuji snímek.');
+    return;
+  }
+  live.ws = ws;
+  ws.binaryType = 'arraybuffer';
+  app.live = live;
+  const fail = message => {
+    if (live.closed || app.live !== live) return;
+    stopLive();
+    if (img) { img.hidden = false; delete img.dataset.next; }
+    video.hidden = true;
+    showLiveError(message);
+    updateController();
+  };
+  const showVideo = fromWebrtc => {
+    live.started = true;
+    clearTimeout(live.timer);
+    if (!fromWebrtc && live.pc && !live.webrtc) {
+      try { live.pc.close(); } catch (_) {}
+      live.pc = null;
+    }
+    video.hidden = false;
+    if (img) img.hidden = true;
+    video.play().catch(() => {});
+    updateController();
+  };
+  const pump = () => {
+    const sb = live.sb;
+    if (!sb || sb.updating || !live.queue.length) return;
+    const chunk = live.queue.shift();
+    try { sb.appendBuffer(chunk); }
+    catch (_) { if (live.queue.length > 40) live.queue.splice(0, live.queue.length); }
+  };
+  live.timer = setTimeout(() => {
+    if (!live.started) fail('Živé video se včas nespustilo. Zobrazuji snímek.');
+  }, 12000);
+  const ms = new Factory();
+  live.ms = ms;
+  ms.addEventListener('sourceopen', () => {
+    if (live.url) URL.revokeObjectURL(live.url);
+    live.mseSent = false;
+    sendMse();
+  });
+  if ('ManagedMediaSource' in window) {
+    video.disableRemotePlayback = true;
+    video.srcObject = ms;
+  } else {
+    live.url = URL.createObjectURL(ms);
+    video.src = live.url;
+  }
+  function sendMse() {
+    if (live.closed || live.mseSent || !live.ws || live.ws.readyState !== 1 || !live.ms || live.ms.readyState !== 'open') return;
+    live.mseSent = true;
+    live.ws.send(JSON.stringify({type: 'mse', value: codecs.join(',')}));
+  }
+  if (app.accessMode === 'lan' && 'RTCPeerConnection' in window) {
+    try {
+      const pc = new RTCPeerConnection({iceServers: [], bundlePolicy: 'max-bundle'});
+      live.pc = pc;
+      pc.addTransceiver('video', {direction: 'recvonly'});
+      pc.addTransceiver('audio', {direction: 'recvonly'});
+      pc.addEventListener('icecandidate', event => {
+        if (live.closed || ws.readyState !== 1) return;
+        const candidate = event.candidate ? event.candidate.candidate : '';
+        if (candidate && !candidate.includes(' udp ') && !candidate.includes(' tcp ')) return;
+        ws.send(JSON.stringify({type: 'webrtc/candidate', value: candidate}));
+      });
+      pc.addEventListener('connectionstatechange', () => {
+        if (live.closed || pc.connectionState !== 'connected') return;
+        const stream = new MediaStream(pc.getReceivers().map(receiver => receiver.track).filter(Boolean));
+        live.webrtc = true;
+        if (live.url) {
+          URL.revokeObjectURL(live.url);
+          live.url = '';
+          video.removeAttribute('src');
+        }
+        video.srcObject = stream;
+        showVideo(true);
+      });
+      pc.createOffer().then(offer => pc.setLocalDescription(offer).then(() => {
+        if (!live.closed && ws.readyState === 1) ws.send(JSON.stringify({type: 'webrtc/offer', value: offer.sdp}));
+      })).catch(() => { live.pc = null; });
+    } catch (_) { live.pc = null; }
+  }
+  ws.addEventListener('open', () => sendMse());
+  ws.addEventListener('message', event => {
+    if (live.closed) return;
+    if (typeof event.data === 'string') {
+      let msg;
+      try { msg = JSON.parse(event.data); } catch (_) { return; }
+      if (msg.type === 'mse' && !live.webrtc) {
+        try {
+          const sb = ms.addSourceBuffer(msg.value);
+          sb.mode = 'segments';
+          live.sb = sb;
+          sb.addEventListener('updateend', () => {
+            pump();
+            try {
+              if (!sb.buffered.length) return;
+              const end = sb.buffered.end(sb.buffered.length - 1);
+              const start = sb.buffered.start(0);
+              if (end - start > 8 && !sb.updating) sb.remove(start, end - 5);
+              if (video.currentTime < end - 1.2) video.currentTime = Math.max(end - 0.3, 0);
+            } catch (_) {}
+          });
+          showVideo();
+          pump();
+        } catch (_) {
+          if (!live.pc) fail('Kamera neposlala obraz, který prohlížeč umí přehrát. Zobrazuji snímek.');
+        }
+        return;
+      }
+      if (msg.type === 'error') {
+        const text = String(msg.value || '');
+        if (text.startsWith('mse') && !live.pc && !live.started) {
+          fail('Kamera neposlala obraz, který prohlížeč umí přehrát. Zobrazuji snímek.');
+        }
+        return;
+      }
+      if (!live.pc) return;
+      if (msg.type === 'webrtc/answer') {
+        live.pc.setRemoteDescription({type: 'answer', sdp: msg.value}).catch(() => {});
+      } else if (msg.type === 'webrtc/candidate' && msg.value) {
+        live.pc.addIceCandidate({candidate: msg.value, sdpMid: '0'}).catch(() => {});
+      }
+      return;
+    }
+    if (!live.webrtc) live.queue.push(event.data);
+    pump();
+  });
+  ws.addEventListener('error', () => fail('Živé video se nepodařilo spojit. Zobrazuji snímek.'));
+  ws.addEventListener('close', () => {
+    if (!live.webrtc) fail(live.started ? 'Spojení živého videa spadlo. Zobrazuji snímek.' : 'Živé video se nepodařilo spojit. Zobrazuji snímek.');
+  });
+}
+function toggleLive() {
+  const module = current();
+  if (!module || module.driver !== 'tapo_c320ws' || !module.enabled || !module.state?.online) return;
+  if (app.live && app.live.id === module.id) {
+    stopLive();
+    const img = $('cameraSnapshot');
+    const video = $('cameraLive');
+    if (img) { img.hidden = false; delete img.dataset.next; }
+    if (video) video.hidden = true;
+    showLiveError('');
+    updateController();
+    return;
+  }
+  startLive(module);
+  updateController();
+}
 function selectModule(id) {
   if (app.busy) return;
+  if (id !== app.selected) stopLive();
   clearPending(); app.selected = id; app.schedule = null; app.presets = [17, 19, 21];
   try { localStorage.setItem('hanzhub-iot-selected', id); } catch (_) {}
   render(); loadEvents(); loadHeaterExtras();
@@ -237,12 +458,14 @@ async function loadModules() {
       app.canManage = data.can_manage;
       app.accessMode = data.access;
     }
+    const previous = app.selected;
     const old = new Map(app.modules.map(m => [m.id, m]));
     app.modules = data.devices.map(m => {
       const previous = old.get(m.id);
       return {...m, state:m.state || (previous?.updated_at === m.updated_at ? previous.state : null)};
     });
     if (!current()) app.selected = app.modules[0]?.id ?? null;
+    if (app.selected !== previous) stopLive();
     showError('pageError', ''); render(); loadEvents(); loadHeaterExtras();
   } catch (error) {
     showError('pageError', ['lan_only','access_required','management_lan_only'].includes(error.code) ? error.message : 'IoT služba není dostupná. Zkontroluj přihlášení a spojení s HanzHubem.');
@@ -566,6 +789,7 @@ document.addEventListener('click', event => {
   const action = event.target.closest('[data-action]'); if (!action || action.disabled) return;
   const m = current(), s = m?.state;
   switch (action.dataset.action) {
+    case 'live': toggleLive(); break;
     case 'add': openModule(); break;
     case 'edit': openModule(m?.id); break;
     case 'refresh': refreshAll(); break;
@@ -640,4 +864,5 @@ async function init() {
   }, 20000);
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStates(); });
+window.addEventListener('pagehide', stopLive);
 init();
