@@ -399,7 +399,7 @@ class IoTManager:
                 if cached and not fresh and time.monotonic() - cached[0] < self.cache_seconds:
                     return dict(cached[1])
             try:
-                state = (self.ewelink_adapter.status(module) if module["driver"] == "sonoff_ewelink" else
+                state = (self.ewelink_adapter.status(module, force=fresh) if module["driver"] == "sonoff_ewelink" else
                          self.camera_adapter.status(module) if module["driver"] == "tapo_c320ws" else
                          self.tapo_adapter.status(module) if module["driver"] == "tapo_p110m"
                          else self._tuya_state(module))
