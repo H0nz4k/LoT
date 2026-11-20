@@ -11,6 +11,8 @@
   <link rel="stylesheet" href="iot.css?v=1.2.0">
   <script src="iot.js?v=1.2.3" defer></script>
   <script src="ewelink.js?v=2" defer></script>
+  <link rel="stylesheet" href="heating.css?v=1">
+  <script src="heating.js?v=1" defer></script>
 </head>
 <body>
   <svg class="svg-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -54,6 +56,27 @@
       <div id="ewelinkDevices" style="margin-top:12px"></div>
     </details>
     <div id="pageError" class="notice error" role="alert" hidden></div>
+    <section id="heatingView" class="heating" aria-labelledby="heatingTitle" hidden>
+      <div class="heating-heading"><h2 id="heatingTitle">Vytápění – infrapanel</h2><span id="heatingStatus" role="status">Načítám…</span></div>
+      <p id="heatingLast" class="subtle"></p>
+      <div id="heatingError" role="alert" hidden></div>
+      <div id="heatingMetrics" class="heating-metrics"></div>
+      <div class="heating-periods" aria-label="Období spotřeby">
+        <button type="button" data-period="today">Dnes</button><button type="button" data-period="yesterday">Včera</button>
+        <button type="button" data-period="7">7 dní</button><button type="button" data-period="30" aria-pressed="true">30 dní</button>
+        <button type="button" data-period="month">Měsíc</button><button type="button" data-period="year">Rok</button>
+        <button type="button" data-period="custom">Vlastní období</button>
+      </div>
+      <form id="heatingRange" class="heating-row" hidden><label>Od <input type="date" id="heatingFrom" min="2026-11-20" required></label><label>Do <input type="date" id="heatingTo" min="2026-11-20" required></label><button class="btn" type="submit">Zobrazit</button></form>
+      <div class="heating-row" aria-label="Veličina grafu"><button type="button" data-metric="kwh" aria-pressed="true">Spotřeba · kWh</button><button type="button" data-metric="cost">Náklady · Kč</button><button type="button" data-metric="power_w">Příkon · W</button><span id="heatingChartLabel" class="subtle"></span></div>
+      <div id="heatingChart" class="heating-chart" tabindex="0" aria-label="Graf spotřeby"></div>
+      <p class="subtle">Měřeno z cloudových počítadel; čas měření zařízení API neposkytuje. Provoz a integrace příkonu jsou odhady. Mezery nejsou nulová spotřeba.</p>
+      <div class="heating-heading"><h3>Historie spotřeby</h3><a id="heatingCsv" class="btn" download>Export CSV</a></div>
+      <div class="heating-table-wrap"><table class="heating-table"><thead><tr><th><button data-sort="day">Datum ↕</button></th><th><button data-sort="kwh">Spotřeba ↕</button></th><th><button data-sort="cost">Náklady ↕</button></th><th><button data-sort="run_h">Provoz ↕</button></th><th>Úplnost / zdroj</th></tr></thead><tbody id="heatingRows"></tbody></table></div>
+      <form id="heatingTariff" class="heating-row"><label>Orientační cena <input id="heatingRate" type="text" inputmode="decimal" required maxlength="12" aria-label="Cena elektřiny v Kč za kWh"> Kč/kWh</label><button class="btn" type="submit">Uložit od nynějška</button><span class="subtle">Cena nemusí zahrnovat regulované poplatky.</span></form>
+      <p id="heatingTariffs" class="subtle"></p>
+      <h3>Události zásuvky a monitoringu</h3><ul id="heatingEvents"></ul>
+    </section>
     <section id="controlView" class="control-layout" role="tabpanel" aria-labelledby="controlTab">
       <aside class="module-sidebar">
         <div class="sidebar-heading"><h2>Moje zařízení</h2><span id="moduleCount" class="count">0</span></div>

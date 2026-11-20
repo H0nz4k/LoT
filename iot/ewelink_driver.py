@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 from iot_driver import IoTError,check_bool
+from energy import sonoff_energy
 
 HOSTS={region:'https://'+region+'-apia.coolkit.'+('cn' if region=='cn' else 'cc') for region in ('eu','us','as','cn')}
 def sign(secret,message):return base64.b64encode(hmac.new(secret.encode(),message.encode(),hashlib.sha256).digest()).decode()
@@ -116,7 +117,8 @@ class SonoffAdapter:
         item=next((x for x in self.client.things(force) if x.get('deviceid')==module['device_id']),None)
         if item is None:raise IoTError('Sonoff není v připojeném účtu eWeLink.',404,'ewelink_missing')
         power=self.client.power(item.get('params') or {})
-        return {'online':item.get('online') is True,'power':power,'source':'ewelink','cloud':True}
+        return {'online':item.get('online') is True,'power':power,'source':'ewelink','cloud':True,
+                'energy':sonoff_energy(item)}
     def command(self,module,command):
         if command.get('control')!='power':raise IoTError('Sonoff podporuje pouze zapnutí a vypnutí.')
         desired=check_bool(command.get('value'))
