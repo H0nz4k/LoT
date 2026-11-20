@@ -3,6 +3,10 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 import base64
+import csv
+import io
+from datetime import datetime, timedelta
+from energy import TZ, START
 import json
 import os
 from pathlib import Path
@@ -29,6 +33,8 @@ ASSETS = {"/": ("index.html", "text/html; charset=utf-8"),
           "/favicon.svg": ("favicon.svg", "image/svg+xml"),
           "/iot-icon.svg": ("iot-icon.svg", "image/svg+xml"),
           "/ewelink.js": ("ewelink.js", "text/javascript; charset=utf-8"),
+          "/heating.js": ("heating.js", "text/javascript; charset=utf-8"),
+          "/heating.css": ("heating.css", "text/css; charset=utf-8"),
           "/version.json": ("version.json", "application/json")}
 
 
@@ -106,7 +112,52 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/")
         manager = self.server.manager
         query = parse_qs(parsed.query)
-        if method == "GET" and path == "/api/iot/ewelink/status":
+        if path in ('/api/iot/heating','/api/iot/heating.csv','/api/iot/heating/tariff') and manager.energy is None:
+            raise IoTError('Úložiště monitoringu není dostupné; ovládání a obnova jsou samostatné.',503,'energy_unavailable')
+        if method == 'GET' and path == '/api/iot/heating/recovery':
+            self._json(manager.recovery.status())
+        elif method == 'POST' and path == '/api/iot/heating/recovery':
+            body=self._body()
+            if set(body) != {'request_id','device_id','confirm'}:
+                raise IoTError('Potvrďte konkrétní 30sekundovou obnovu.')
+            self._json({'operation':manager.recovery.start(body['request_id'],body['device_id'],body['confirm'])},202)
+        elif method == 'POST' and path == '/api/iot/heating/recovery/restore':
+            body=self._body()
+            if set(body) != {'operation_id','confirm'}:
+                raise IoTError('Potvrďte pouze obnovení zapnutého stavu.')
+            self._json({'operation':manager.recovery.retry_restore(body['operation_id'],body['confirm'])},202)
+        elif method == 'GET' and path in ('/api/iot/heating', '/api/iot/heating.csv'):
+            today = datetime.now(TZ).date()
+            first = query.get('from', [max(datetime.fromtimestamp(START,TZ).date(), today-timedelta(days=29)).isoformat()])[0]
+            last = query.get('to', [today.isoformat()])[0]
+            report = manager.energy.report(first,last)
+            if path.endswith('.csv'):
+                stream=io.StringIO(newline='')
+                writer=csv.writer(stream,delimiter=';')
+                writer.writerow(['Datum','Spotřeba (kWh)','Orientační náklady (Kč)','Provoz - odhad (h)','Zdroj','Chybějící data (s)','Odhad rozdělení do období'])
+                def cz(value, places):
+                    return '' if value is None else f'{value:.{places}f}'.replace('.',',')
+                for row in report['days']:
+                    writer.writerow([row['day'],cz(row['kwh'],4),cz(row['cost'],2),cz(row['run_h'],2),
+                                     'Nedostupné' if row['kwh'] is None else 'Odhad' if row['estimated'] else 'Měřeno (cloud)',
+                                     round(row['missing_seconds']),bool(row['allocation_estimated'])])
+                payload=('\ufeff'+stream.getvalue()).encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type','text/csv; charset=utf-8')
+                self.send_header('Content-Disposition','attachment; filename="infrapanel.csv"')
+                self.send_header('Cache-Control','no-store')
+                self.send_header('Content-Length',str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            else:
+                self._json(report)
+        elif method == 'POST' and path == '/api/iot/heating/tariff':
+            body=self._body()
+            if set(body) != {'czk_per_kwh'}:
+                raise IoTError('Zadejte pouze cenu za kWh.')
+            manager.energy.tariff(body['czk_per_kwh'])
+            self._json({'ok':True})
+        elif method == "GET" and path == "/api/iot/ewelink/status":
             self._json(manager.ewelink_adapter.client.status())
         elif method == "GET" and path == "/api/iot/ewelink/login":
             self._json({"url":manager.ewelink_adapter.client.login()})
@@ -329,6 +380,9 @@ if __name__ == "__main__":
     port = int(os.environ.get("HANZHUB_IOT_PORT", "4011"))
     server = make_server(port=port)
     server.manager.start_scheduler()
+    server.manager.recovery.resume()
+    if server.manager.energy is not None:
+        server.manager.energy.start()
     threading.Thread(target=register_dashboard, daemon=True).start()
     print(f"HanzHub IoT: 0.0.0.0:{port}", flush=True)
     server.serve_forever()
