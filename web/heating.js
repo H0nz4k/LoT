@@ -8,13 +8,14 @@
   const today = () => new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Prague',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
   const start = '2026-11-20';
   let report,metric='kwh',period='30',sort='day',descending=true,visible=false,sequence=0,busy=false;
+  let recoveryOperation=null,recoverySubmitting=false,recoveryMode='cycle',recoveryRequestId=null;
   const button=document.createElement('button');
   button.type='button';button.id='heatingTab';button.textContent='Vytápění';button.className='btn';button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls','heatingView');
   document.querySelector('.toolbar .heading-actions').prepend(button);
   function toggle(open) {
     visible=open;el('heatingView').hidden=!open;button.setAttribute('aria-expanded',String(open));
     el('controlView').hidden=open;el('manageView').hidden=true;
-    if(open) {el('controlTab').setAttribute('aria-selected','false');el('manageTab').setAttribute('aria-selected','false');load();}
+    if(open) {el('controlTab').setAttribute('aria-selected','false');el('manageTab').setAttribute('aria-selected','false');load();loadRecovery();}
   }
   button.onclick=()=>{if(visible){toggle(false);el('controlTab').click();}else toggle(true);};
   window.addEventListener('iot-control-view',()=>{visible=false;el('heatingView').hidden=true;button.setAttribute('aria-expanded','false');});
@@ -34,6 +35,49 @@
     const res=await fetch('/api/iot'+path,{cache:'no-store',signal:AbortSignal.timeout(20000),...options});
     const body=await res.json();if(!res.ok)throw new Error(body.error||'Chyba načtení monitoringu');return body;
   }
+  async function loadRecovery() {
+    try {
+      const data=await request('/heating/recovery');const previousPhase=recoveryOperation?.phase;recoveryOperation=data.operation;
+      const canManage=typeof app!=='undefined'&&app.canManage;
+      el('infraRecover').disabled=!canManage||data.busy||recoverySubmitting;
+      el('infraRestoreOn').hidden=!canManage||recoveryOperation?.phase!=='needs_review';
+      el('infraRestoreOn').disabled=recoverySubmitting;
+      const remaining=recoveryOperation?.phase==='off'&&recoveryOperation.restore_after?' · zbývá přibližně '+Math.max(0,Math.ceil(recoveryOperation.restore_after-Date.now()/1000))+' s':'';
+      el('infraRecoveryStatus').textContent=recoveryOperation?recoveryOperation.message+remaining+' · '+date(recoveryOperation.updated_at):'Připraveno · vypnutí vyžaduje výslovné potvrzení v domácí síti.';
+      el('infraRecoveryStatus').dataset.operationId=recoveryOperation?.id||'';
+      if(recoveryOperation&&previousPhase!==recoveryOperation.phase&&['completed','restored','needs_review','failed'].includes(recoveryOperation.phase))load();
+    } catch(error){el('infraRecover').disabled=true;el('infraRestoreOn').hidden=true;el('infraRecoveryStatus').textContent=error.message;}
+  }
+  function recoveryDialog(mode) {
+    recoveryMode=mode;
+    el('infraRecoveryDialog').returnValue='cancel';
+    el('infraRecoveryConfirm').textContent=mode==='restore'?'Schvaluji pouze zapnutí':'Schvaluji vypnutí na 30 sekund';
+    el('infraRecoveryTitle').textContent=mode==='restore'?'Obnovit pouze zapnutí zásuvky':'Obnovení připojení infrapanelu';
+    el('infraRecoveryDialog').querySelectorAll('p')[1].textContent=mode==='restore'?'Provede se pouze ověření správné zásuvky a obnovení zapnutého stavu. Vypnutí se neopakuje.':'Zásuvka se vypne na 30 sekund a potom se ověří opětovné zapnutí. Při chybě se systém pokusí obnovit pouze zapnutý stav.';
+    el('infraRecoveryDialog').showModal();
+  }
+  el('infraRecover').onclick=()=>recoveryDialog('cycle');
+  el('infraRestoreOn').onclick=()=>recoveryDialog('restore');
+  el('infraRecoveryDialog').addEventListener('close',async()=>{
+    if(el('infraRecoveryDialog').returnValue!=='confirm'||recoverySubmitting)return;
+    recoverySubmitting=true;el('infraRecover').disabled=true;
+    try {
+      if(recoveryMode==='restore') {
+        await request('/heating/recovery/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operation_id:recoveryOperation.id,confirm:'restore-on'})});
+      } else {
+        // Keep an uncertain request UUID: an explicit retry must not create another OFF.
+        if(!recoveryRequestId){
+          const bytes=crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+          const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+          recoveryRequestId=[hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join('-');
+        }
+        await request('/heating/recovery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:recoveryRequestId,device_id:'1002a4a7e6',confirm:'power-cycle-30s'})});
+        recoveryRequestId=null;
+      }
+      await loadRecovery();
+    }catch(error){el('infraRecoveryStatus').textContent=error.message;}
+    finally{recoverySubmitting=false;await loadRecovery();}
+  });
   async function load() {
     const token=++sequence;
     try {
@@ -52,7 +96,8 @@
       el('heatingTariff').hidden=typeof app==='undefined'||!app.canManage;
       if(document.activeElement!==el('heatingRate'))el('heatingRate').value=String(data.tariffs.at(-1).czk_per_kwh).replace('.',',');
       el('heatingTariffs').textContent='Tarify: '+data.tariffs.map(t=>date(t.effective)+' · '+t.czk_per_kwh.replace('.',',')+' Kč/kWh').join('; ');
-      el('heatingEvents').innerHTML=data.events.length?data.events.map(e=>`<li>${escape(date(e.at))} · ${escape(e.phase)} · ${escape(e.message)}</li>`).join(''):'<li>Bez zaznamenaných událostí v období.</li>';
+      const eventNames={recovery_started:'Zahájení obnovy',recovery_off_intent:'Ověření zásuvky',recovery_off:'Vypnutí',recovery_restoring:'Obnovení zapnutí',recovery_restore_pending:'Zapnutí zatím nepotvrzeno',recovery_completed:'Obnova dokončena',recovery_restored:'Zapnutí obnoveno po přerušení',recovery_needs_review:'Nutná kontrola zapnutí',recovery_failed:'Obnova neprovedena',power_on:'Zapnutí',power_off:'Vypnutí',counter_reset:'Reset elektroměru'};
+      el('heatingEvents').innerHTML=data.events.length?data.events.map(e=>`<li>${escape(date(e.at))} · ${escape(eventNames[e.phase]||e.phase)} · ${escape(e.message.replace(/^[0-9a-f-]{36}: /,''))}</li>`).join(''):'<li>Bez zaznamenaných událostí v období.</li>';
       renderChart();renderRows();
     } catch(error){if(token===sequence){el('heatingStatus').textContent='Chyba';el('heatingError').hidden=false;el('heatingError').textContent=error.message;}}
   }
@@ -75,5 +120,6 @@
   el('heatingFrom').value=start;el('heatingTo').value=today();
   el('heatingRange').onsubmit=e=>{e.preventDefault();load();};
   el('heatingTariff').onsubmit=async e=>{e.preventDefault();if(busy)return;busy=true;const submit=e.submitter;submit.disabled=true;try{await request('/heating/tariff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({czk_per_kwh:el('heatingRate').value})});await load();}catch(error){el('heatingError').hidden=false;el('heatingError').textContent=error.message;}finally{busy=false;submit.disabled=false;}};
-  setInterval(()=>{if(visible&&!document.hidden)load();},60000);
+  setInterval(()=>{if(visible&&!document.hidden){load();loadRecovery();}},60000);
+  setInterval(()=>{if(visible&&!document.hidden&&recoveryOperation&&!['completed','restored','failed','needs_review'].includes(recoveryOperation.phase))loadRecovery();},2000);
 })();

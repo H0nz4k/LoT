@@ -112,7 +112,21 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/")
         manager = self.server.manager
         query = parse_qs(parsed.query)
-        if method == 'GET' and path in ('/api/iot/heating', '/api/iot/heating.csv'):
+        if path in ('/api/iot/heating','/api/iot/heating.csv','/api/iot/heating/tariff') and manager.energy is None:
+            raise IoTError('Úložiště monitoringu není dostupné; ovládání a obnova jsou samostatné.',503,'energy_unavailable')
+        if method == 'GET' and path == '/api/iot/heating/recovery':
+            self._json(manager.recovery.status())
+        elif method == 'POST' and path == '/api/iot/heating/recovery':
+            body=self._body()
+            if set(body) != {'request_id','device_id','confirm'}:
+                raise IoTError('Potvrďte konkrétní 30sekundovou obnovu.')
+            self._json({'operation':manager.recovery.start(body['request_id'],body['device_id'],body['confirm'])},202)
+        elif method == 'POST' and path == '/api/iot/heating/recovery/restore':
+            body=self._body()
+            if set(body) != {'operation_id','confirm'}:
+                raise IoTError('Potvrďte pouze obnovení zapnutého stavu.')
+            self._json({'operation':manager.recovery.retry_restore(body['operation_id'],body['confirm'])},202)
+        elif method == 'GET' and path in ('/api/iot/heating', '/api/iot/heating.csv'):
             today = datetime.now(TZ).date()
             first = query.get('from', [max(datetime.fromtimestamp(START,TZ).date(), today-timedelta(days=29)).isoformat()])[0]
             last = query.get('to', [today.isoformat()])[0]
@@ -366,7 +380,9 @@ if __name__ == "__main__":
     port = int(os.environ.get("HANZHUB_IOT_PORT", "4011"))
     server = make_server(port=port)
     server.manager.start_scheduler()
-    server.manager.energy.start()
+    server.manager.recovery.resume()
+    if server.manager.energy is not None:
+        server.manager.energy.start()
     threading.Thread(target=register_dashboard, daemon=True).start()
     print(f"HanzHub IoT: 0.0.0.0:{port}", flush=True)
     server.serve_forever()

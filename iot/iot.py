@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from ipaddress import IPv4Address, IPv4Network
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -16,6 +17,7 @@ from tapo_driver import LocalTapo
 from ewelink_driver import SonoffAdapter
 from camera_driver import LocalCamera
 from energy import EnergyMonitor, DEVICE_ID as INFRA_PLUG_ID
+from recovery import PowerRecovery
 
 PANEL_MAC = "fc:3c:d7:4c:a2:dc"
 PRIVATE_NETWORKS = tuple(IPv4Network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
@@ -106,7 +108,12 @@ class IoTManager:
         except OSError:
             raise IoTError("Nelze otevřít úložiště IoT modulů.", 503, "storage_unavailable") from None
         self._bootstrap()
-        self.energy = EnergyMonitor(self)
+        try:
+            self.energy = EnergyMonitor(self)
+        except (sqlite3.Error, OSError):
+            self.energy = None
+            logging.getLogger(__name__).error('Energy ledger unavailable; device control and pending recovery remain enabled')
+        self.recovery = PowerRecovery(self)
 
     @contextmanager
     def _db(self):
@@ -446,13 +453,12 @@ class IoTManager:
 
     def _event(self, module_id, control, value, ok, message):
         # Monitoring failures must never alter a confirmed device-command result.
-        if hasattr(self, 'energy') and control == 'power':
+        if getattr(self,'energy',None) is not None and control == 'power':
             try:
                 if self._module(module_id)['device_id'] == INFRA_PLUG_ID:
                     self.energy.event('power_on' if value else 'power_off',
                                       ('Potvrzeno: ' if ok else 'Nepotvrzeno: ') + message)
             except (sqlite3.Error, OSError, IoTError):
-                import logging
                 logging.getLogger(__name__).error('Cannot append infra power event')
         with self._db() as db:
             db.execute("INSERT INTO events(module_id,control,value,ok,message,at) VALUES(?,?,?,?,?,?)",

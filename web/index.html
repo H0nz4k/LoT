@@ -59,6 +59,8 @@
     <section id="heatingView" class="heating" aria-labelledby="heatingTitle" hidden>
       <div class="heating-heading"><h2 id="heatingTitle">Vytápění – infrapanel</h2><span id="heatingStatus" role="status">Načítám…</span></div>
       <p id="heatingLast" class="subtle"></p>
+      <div class="heating-row"><button id="infraRecover" type="button" disabled>Obnovit připojení infrapanelu</button><button id="infraRestoreOn" type="button" hidden>Obnovit pouze zapnutí</button><span id="infraRecoveryStatus" role="status">Ověřuji stav obnovy…</span></div>
+      <dialog id="infraRecoveryDialog" aria-labelledby="infraRecoveryTitle"><form method="dialog"><h2 id="infraRecoveryTitle">Obnovení připojení infrapanelu</h2><p>Zás. infra · SONOFF S60TPF · 1002a4a7e6</p><p>Zásuvka se vypne na 30 sekund a potom se ověří opětovné zapnutí. Při chybě se systém pokusí obnovit pouze zapnutý stav.</p><p>Pokračováním výslovně schvalujete fyzické ovládání této zásuvky.</p><div class="heating-row"><button class="btn" value="cancel">Zrušit</button><button class="btn" id="infraRecoveryConfirm" value="confirm">Schvaluji vypnutí na 30 sekund</button></div></form></dialog>
       <div id="heatingError" role="alert" hidden></div>
       <div id="heatingMetrics" class="heating-metrics"></div>
       <div class="heating-periods" aria-label="Období spotřeby">

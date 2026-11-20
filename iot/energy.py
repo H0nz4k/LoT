@@ -94,6 +94,11 @@ class EnergyMonitor:
             db.execute('INSERT INTO energy_tariffs VALUES (?,?)', (effective, str(rate)))
 
     def collect(self):
+        recovery = getattr(self.manager, 'recovery', None)
+        recovery_token, recovering = recovery.monitor_snapshot() if recovery else (None, False)
+        if recovering:
+            self.record({}, 'gap', 'Probíhá obnova napájení nebo čeká na kontrolu zapnutí')
+            return
         with self.manager._db() as db:
             modules = db.execute('SELECT * FROM modules WHERE device_id=? AND driver=?',
                                  (DEVICE_ID, 'sonoff_ewelink')).fetchall()
@@ -119,7 +124,10 @@ class EnergyMonitor:
                 status, reason = 'gap', error.code
         else:
             reason = 'Správná zásuvka není jednoznačně registrovaná nebo je pozastavená'
-        self.record(state.get('energy') or {}, status, reason)
+        if recovery and recovery.monitor_snapshot()[0] != recovery_token:
+            self.record({}, 'gap', 'Obnova napájení změnila stav během čtení; vzorek není použit')
+        else:
+            self.record(state.get('energy') or {}, status, reason)
 
     def record(self, energy, status='active', reason='', at=None):
         at = at if at is not None else datetime.now(timezone.utc).timestamp()
@@ -170,6 +178,10 @@ class EnergyMonitor:
             if kwh is not None and abs(kwh) < 1e-9:
                 return
             contiguous = at - start <= 180 and prev['status'] == 'active'
+            recovery_overlap = db.execute("""SELECT 1 FROM infra_recovery WHERE off_intent=1 AND requested_at<?
+                AND (updated_at>? OR phase NOT IN ('completed','restored','failed')) LIMIT 1""", (at,start)).fetchone()
+            if recovery_overlap:
+                contiguous = False
             if kwh is None:
                 if not contiguous or power is None or prev['power_w'] is None:
                     return
