@@ -205,8 +205,8 @@ volume a v `.env` nastavit `HANZHUB_TUYA_KEY_DIR=/var/lib/hanzhub-iot/keys`.
 Příslušné soubory je třeba nejprve bezpečně vytvořit v tomto volume;
 HUB2 instalátor není určený pro Docker.
 
-Mapování dalších DP a experimentální příkazy jsou samostatný další krok.
-Tato verze nepřidává neověřené povely ani automatické vypínání.
+[Ověřené mapování DP a test zápisu teploty](bot-iph2-dps.md) je evidováno
+samostatně. Tato verze nepřidává neověřené povely ani automatické vypínání.
 
 ### Výsledek ověření verze 1.2.1
 
