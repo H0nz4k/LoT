@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -145,6 +146,23 @@ class LocalKeyTests(unittest.TestCase):
         with patch.dict(os.environ, {"HANZHUB_TUYA_KEY_DIR": "/different"}):
             with self.assertRaises(ValueError):
                 verifier.verify(manifest)
+
+
+class InstallationReadinessTests(unittest.TestCase):
+    def test_ready_requires_expected_service_and_ok_true(self):
+        with patch.object(installer, "urlopen", return_value=io.StringIO('{"ok":true,"service":"hanzhub_iot"}')):
+            installer.wait_ready()
+
+    def test_temporary_startup_race_is_retried_as_read_only_health(self):
+        replies = [OSError("not listening yet"), io.StringIO('{"ok":true,"service":"hanzhub_iot"}')]
+        with patch.object(installer, "urlopen", side_effect=replies) as call, patch.object(installer.time, "sleep"):
+            installer.wait_ready()
+        self.assertEqual(call.call_count, 2)
+
+    def test_other_service_does_not_report_success(self):
+        with patch.object(installer, "urlopen", side_effect=lambda *a, **kw: io.StringIO('{"ok":true,"service":"other"}')), patch.object(installer.time, "sleep"):
+            with self.assertRaises(RuntimeError):
+                installer.wait_ready()
 
 
 if __name__ == "__main__":

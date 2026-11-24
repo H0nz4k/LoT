@@ -1,6 +1,7 @@
 # HanzHub IoT
 
-**Připravená verze 1.2.1:** [přímá LAN komunikace a soubor lokálního klíče](docs/local-lan-control.md).
+**Verze 1.2.2:** [přímá LAN komunikace a soubor lokálního klíče](docs/local-lan-control.md),
+instalovaná čtecí diagnostika DP a ověření připravenosti po aktualizaci.
 [Mapování hodnot a příkazů BOT IPH2](docs/bot-iph2-dps.md) uvádí konkrétní
 ověření a odlišuje fyzicky netestované příkazy.
 Pro HUB2 se systemd používej verzovaný instalační postup v tomto dokumentu;

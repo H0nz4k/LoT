@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import time
+from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = Path("/opt/hanzhub-iot/iot/iot_driver.py")
@@ -44,6 +45,19 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def wait_ready():
+    for _ in range(20):
+        try:
+            with urlopen("http://127.0.0.1:4011/api/iot/health", timeout=1) as response:
+                result = json.load(response)
+            if result.get("ok") is True and result.get("service") == "hanzhub_iot":
+                return
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.5)
+    raise RuntimeError("IoT health did not become ready; rolling back")
+
+
 def main():
     import pwd
     parser = argparse.ArgumentParser(description=__doc__)
@@ -62,7 +76,7 @@ def main():
     driver_text = patched_driver(DRIVER.read_text())
     version = json.loads((ROOT / "web/version.json").read_text())["version"]
     # Validate every Python source before the first live write.
-    for name in ("iot/local_keys.py", "tools/set-local-key.py", "tools/verify-local-lan.py"):
+    for name in ("iot/local_keys.py", "tools/set-local-key.py", "tools/verify-local-lan.py", "tools/probe-panel-dps.py"):
         ast.parse((ROOT / name).read_text())
     account = pwd.getpwnam("hanz")
     files = {
@@ -71,6 +85,7 @@ def main():
         COMPONENT / "iot/local_keys.py": (ROOT / "iot/local_keys.py").read_text(),
         COMPONENT / "tools/set-local-key.py": (ROOT / "tools/set-local-key.py").read_text(),
         COMPONENT / "tools/verify-local-lan.py": (ROOT / "tools/verify-local-lan.py").read_text(),
+        COMPONENT / "tools/probe-panel-dps.py": (ROOT / "tools/probe-panel-dps.py").read_text(),
         Path("/opt/hanzhub-iot/web/version.json"): json.dumps({"version": version}) + "\n",
         DROPIN: "[Service]\nEnvironment=HANZHUB_TUYA_KEY_DIR=" + str(KEYS) +
             "\nExecStartPre=/opt/hanzhub/iot-venv/bin/python -B " + str(COMPONENT / "tools/verify-local-lan.py") +
@@ -111,6 +126,7 @@ def main():
         subprocess.run(["systemctl", "daemon-reload"], check=True)
         subprocess.run(["systemctl", "restart", "hanzhub-iot"], check=True)
         subprocess.run(["systemctl", "is-active", "--quiet", "hanzhub-iot"], check=True)
+        wait_ready()
     except Exception:
         subprocess.run(["sh", str(backup / "restore.sh")], check=True)
         raise
