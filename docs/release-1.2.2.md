@@ -27,3 +27,14 @@ tato LAN aktualizace je zachovává a nepřepisuje.
 Pro cenu samotného vytápění je nutné, aby měřená zásuvka napájela pouze
 infrapanel. Termostat poskytuje teploty a stav, nikoli energetické kWh.
 Chybějící minulá měření nelze odhadovat z nastavené teploty.
+
+## Ověření vydání
+
+- Nasazený zdroj LAN komponentu: `a45ed0fa63855dfe519454e1624bb10c48c1c915`.
+- Před nasazením prošlo 112 testů v odděleném Linux prostředí.
+- Po aktualizaci odpovídá health i čerstvé čtení panelu přes Dashboard.
+  Nainstalovaná čtecí diagnostika načetla DP 1–6 a kontrola integrity prošla.
+- Klíč zůstal obsahově stejný s oprávněním 600. Dashboard nebyl restartován.
+  Během nasazení nebyly odeslány žádné změny teploty ani napájení.
+- Instalační manifest obsahuje verzi, zdrojový SHA, otisky souborů
+  a konkrétní lokální cestu k připravenému rollbacku.
