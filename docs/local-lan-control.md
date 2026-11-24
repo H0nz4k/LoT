@@ -12,8 +12,8 @@ Autor dokumentace nové spojení se zařízením ani zápis neprováděl.
 | Parametr | Ověřená hodnota |
 | --- | --- |
 | Zařízení | Infrapanel BOT IPH2 |
-| Adresa | `192.168.1.51:6668`, TCP |
-| Device ID | `bf66247c13125cd7bcs0vj` |
+| Adresa | ověřená LAN adresa panelu, TCP 6668 |
+| Device ID | lokálně uložené ID panelu (ve veřejné dokumentaci vynecháno) |
 | Protokol | Tuya 3.4 |
 | Klient | TinyTuya 1.21.1, Python 3, HUB2 |
 | Python prostředí | `~/panel-test-venv` |
@@ -51,6 +51,9 @@ Vlož celý blok. Lokální klíč se zadává skrytě a skript pouze čte stav:
 
 ```bash
 source ~/panel-test-venv/bin/activate
+read -r -p 'Device ID panelu: ' PANEL_ID
+read -r -p 'LAN IP panelu: ' PANEL_IP
+export PANEL_ID PANEL_IP
 read -r -s -p 'Aktuální lokální klíč panelu: ' PANEL_LOCAL_KEY
 printf '\n'
 export PANEL_LOCAL_KEY
@@ -60,8 +63,8 @@ import os
 import tinytuya
 
 panel = tinytuya.Device(
-    "bf66247c13125cd7bcs0vj",
-    "192.168.1.51",
+    os.environ["PANEL_ID"],
+    os.environ["PANEL_IP"],
     os.environ["PANEL_LOCAL_KEY"],
     version=3.4,
 )
@@ -99,7 +102,7 @@ chybu 905. Po opravě počtu pokusů následovalo pouze úspěšné čtení.
 - Systémový `python3` neměl TinyTuya; samostatné prostředí jej obsahuje.
 - Původní ukázka měla chybný `set_socketRetryLimit(0)` a vracela 905
   (`Device Unreachable`). Nulu nepoužívat; může potlačit pokus o spojení.
-- Samostatný test TCP spojení na `192.168.1.51:6668` prošel.
+- Samostatný test TCP spojení na ověřenou LAN adresu panelu a TCP port 6668 prošel.
 - Se stejnou adresou, protokolem 3.4, zadaným lokálním klíčem a
   `set_socketRetryLimit(1)` pak panel vrátil výše uvedené DPS.
 - Předchozí HTTP výpis HanzHubu hlásil pro panel TinyTuya 914.
@@ -114,7 +117,7 @@ produkční klíč a neprovádět obnovu napájení.
 
 - `http://127.0.0.1:4011/api/iot/devices` je HTTP API HanzHub IoT.
   Jeho volání přes `curl` není přímé spojení s panelem.
-- Tapo P110M na `192.168.1.52` má v repozitáři lokální ovladač
+- Tapo P110M na vlastní ověřené LAN adrese má v repozitáři lokální ovladač
   `python-kasa`. HTTP výpis HUBu hlásil online stav a měření;
   samostatný přímý test Tapo nebyl touto terminálovou ukázkou doložen.
   Jeho protokol a přihlašování nejsou stejné jako u Tuya panelu.
@@ -138,27 +141,29 @@ klíči z databáze: daný panel hlásí `local_key_unavailable`. Ostatní
 ovladače Tapo a Sonoff se nemění. Bez nastavené proměnné je zachováno
 původní chování pro starší instalace.
 
-Na HUB2 je klíč v `/var/lib/hanzhub/iot/keys/bf66247c13125cd7bcs0vj.key`.
+Na HUB2 je klíč v `/var/lib/hanzhub/iot/keys/<DEVICE_ID>.key`.
 Adresář má režim 700 a soubor 600, vlastník `hanz`. Klíč není součást
 aplikace, aktualizačního archivu, manifestu ani Gitu. Nástroj jej uloží
 atomicky; neplatné zadání nepřepíše předchozí soubor. Neobnovuje se
 automaticky ze starého `devices.json` ani z dřívější databáze.
 
-Po instalaci operátor zadá známý funkční klíč jednou v SSH terminálu:
+Po instalaci operátor zadá známý funkční klíč jednou v SSH terminálu.
+`PANEL_ID` musí obsahovat skutečné lokální Device ID:
 
 ```bash
 python3 /opt/hanzhub/iot-local-lan/tools/set-local-key.py \
   --directory /var/lib/hanzhub/iot/keys \
-  --device-id bf66247c13125cd7bcs0vj
+  --device-id "$PANEL_ID"
 ```
 
 Nástroj se na klíč zeptá dvakrát bez zobrazení. Nezadávat klíč do chatu.
 Restart služby není potřeba; běžná cache stavu může trvat osm sekund.
-Ověření přes Dashboard je stále lokální komunikace:
+Ověření přes lokální službu je stále LAN komunikace.
+`PANEL_MODULE_ID` je interní ID panelu z registru HUBu, nikoli Tuya Device ID:
 
 ```bash
 curl -sS --max-time 20 \
-  'http://127.0.0.1:4011/api/iot/devices/363e82f24c0e/state?fresh=1'
+  "http://127.0.0.1:4011/api/iot/devices/${PANEL_MODULE_ID}/state?fresh=1"
 ```
 
 ### Aktualizace na současném HUB2
@@ -202,3 +207,20 @@ HUB2 instalátor není určený pro Docker.
 
 Mapování dalších DP a experimentální příkazy jsou samostatný další krok.
 Tato verze nepřidává neověřené povely ani automatické vypínání.
+
+### Výsledek ověření verze 1.2.1
+
+- Zdroj runtime: commit `ac2137318e25e0a27790a430a3fa109f73aac0e2`.
+- 107 testů prošlo v odděleném Linux prostředí se syntetickými daty;
+  [GitHub CI](https://github.com/H0nz4k/LoT/actions/runs/45310261582) prošla také.
+- Po výslovném schválení operátorem byla souborová LAN podpora nasazena.
+  Health a lokální čtecí brána Dashboardu odpovídají, kontrola integrity
+  při startu prošla. Ostatní sledované služby zůstaly aktivní.
+- Při první kontrole ještě nebyl zadaný klíč, proto panel správně hlásil
+  `local_key_unavailable` namísto použití starého klíče z databáze.
+  Po soukromém zadání klíče operátorem následné čtení IoT i brány
+  běžícího Dashboardu vrátilo `online: true` a shodné skutečné teploty,
+  zapnutí, zámek i časovač. Soubor má oprávnění 600 a vlastnictví účtu
+  služby. Tapo také zůstalo online a vracelo skutečný příkon i spotřebu.
+- Žádný nový fyzický povel ani změna teploty nebyly při nasazení provedeny.
+  Energetický release nebyl tímto cíleným overlayem nasazován.
