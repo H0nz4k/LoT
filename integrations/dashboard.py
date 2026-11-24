@@ -66,6 +66,9 @@ def install_navigation(directory):
     (directory / 'icons').mkdir(exist_ok=True)
     shutil.copyfile(ASSETS / 'iot.svg', directory / 'icons' / 'iot.svg')
     shutil.copyfile(ASSETS / 'iot-entry.html', directory / 'iot.html')
+    # Public web assets must remain readable even with a restrictive installer umask.
+    (directory / 'iot.html').chmod(0o644)
+    (directory / 'icons' / 'iot.svg').chmod(0o644)
     return backup
 
 

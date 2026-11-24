@@ -310,6 +310,7 @@ function queueTemperature(value) {
 
 function changeView(manage) {
   if (manage && !app.canManage) return;
+  window.dispatchEvent(new Event('iot-control-view'));
   $('controlView').hidden = manage; $('manageView').hidden = !manage;
   $('controlTab').setAttribute('aria-selected', String(!manage));
   $('manageTab').setAttribute('aria-selected', String(manage));

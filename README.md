@@ -1,5 +1,12 @@
 # HanzHub IoT
 
+**Verze 1.2.2:** [přímá LAN komunikace a soubor lokálního klíče](docs/local-lan-control.md),
+instalovaná čtecí diagnostika DP a ověření připravenosti po aktualizaci.
+[Mapování hodnot a příkazů BOT IPH2](docs/bot-iph2-dps.md) uvádí konkrétní
+ověření a odlišuje fyzicky netestované příkazy.
+Pro HUB2 se systemd používej verzovaný instalační postup v tomto dokumentu;
+starý Docker instalátor na tomto hostu záměrně odmítne pokračovat.
+
 Samostatná služba pro lokální ovládání a správu chytrých modulů v HanzHubu. Běží na Raspberry Pi jako kontejner `hanzhub_iot`, výchozí port je **4011**. Repo se jmenuje **LoT**, aplikace používá název **IoT moduly**.
 
 Web zachovává styl stávajícího HanzHubu: tmavé pozadí s barevnými přechody, průsvitné karty, logo HanzHub a zelené akce. Ovládání infrapanelu má velkou cílovou teplotu s kruhovým ukazatelem, aktuální teplotu, tlačítka ±, posuvník, zapnutí, dětský zámek a časovač. Funguje na počítači i telefonu.
@@ -253,3 +260,17 @@ Testy pokrývají mapování DP, rozsahy a typy, potvrzování zápisu, timer, p
 Ve verzi 1.1.0 prošlo 45 automatických testů a kontrola syntaxe Python/JavaScript/shell. V prostředí přípravy nebyl Docker ani přístup k framebufferu Raspberry; sestavení ARM kontejneru, skutečné LCD a ovládání fyzické zásuvky je nutné ověřit na HUBu. Cloudový prohlížeč zde nepovolil přístup k lokálnímu portu pro vizuální ověření webu.
 
 Zdroje: [TinyTuya](https://github.com/jasonacox/tinytuya), [potvrzený Tuya thing model endpoint](https://developer.tuya.com/en/docs/cloud/bd68171262?id=Kcp4utbhzzfgo), [původní HanzHub Dashboard](https://github.com/H0nz4k/Dashboard).
+
+
+## Integrace Příchod / Odchod
+
+Centrální konfiguraci, persistovaný poslední režim a deduplikaci požadavků spravuje [HanzHub Dashboard](https://github.com/H0nz4k/Dashboard). InfoLCD čte `GET /api/presence/state` a explicitním dotykem posílá `POST /api/presence/run`. Renderování ani načtení stavu zařízení nezapíná.
+
+Dashboard vybírá moduly z `GET /api/iot/devices`: stabilní 12místné ID, `enabled: true` a `capabilities.controls` obsahující `power`. Akce používá existující `POST /api/iot/devices/{id}/command` s JSON `{"control":"power","value":true}` pro Příchod a `false` pro Odchod. Potvrzení vyžaduje `ok: true`, `state.online: true` a odpovídající boolean `state.power`. Odebrané/zakázané zařízení nesmí být nahrazeno jiným modulem. Částečné selhání zůstává v centrálním stavu; po timeoutu se příkaz automaticky neopakuje.
+
+LoT API zůstává kompatibilní, bez další kopie scénového stavu. Regresní HTTP test `test_presence_scene_inventory_and_confirmed_boolean_power_contract` ověřuje přesný kontrakt výběru a obou přepnutí bez fyzického zařízení.
+
+
+### Oprávnění vstupní stránky dashboardu
+
+Integrace nastavuje veřejným souborům iot.html a icons/iot.svg oprávnění 0644 i při opakované instalaci. Tím opravuje starší soubory vytvořené s režimem 0600, které nginx nemohl přečíst (403 Forbidden).

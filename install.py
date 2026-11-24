@@ -43,6 +43,10 @@ def main():
     ap.add_argument('--skip-dashboard', action='store_true')
     args = ap.parse_args()
     try:
+        if Path('/etc/systemd/system/hanzhub-iot.service').exists():
+            raise ValueError('Na hostu je systemd IoT. Nepoužívej starý Docker instalátor; '
+                             'použij tools/install-hub2-panel-lan.py podle docs/local-lan-control.md. '
+                             'Běžící služba ani klíče nebyly změněny.')
         config = settings()
         port = int(config.get('HANZHUB_IOT_PORT', '4011'))
         if not 1 <= port <= 65535:

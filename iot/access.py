@@ -60,6 +60,8 @@ class RemoteAccess:
 
 
 def remote_route_allowed(method, path):
+    if method == 'GET' and path in ('/api/iot/heating', '/api/iot/heating.csv','/api/iot/heating/recovery'):
+        return True
     if method == "GET" and path in ("/api/iot/ewelink/status", "/api/iot/ewelink/login", "/api/iot/ewelink/devices","/api/iot/info", "/api/iot/health", "/api/iot/devices",
                                     "/api/iot/panel", "/api/iot/events"):
         return True

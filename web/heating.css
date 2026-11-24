@@ -1,0 +1,29 @@
+.heating {padding:20px;background:#121826;border:1px solid var(--stroke);border-radius:6px;font-size:14px}
+.heating h2,.heating h3 {font-size:18px;margin:0}
+.heating-heading,.heating-row,.heating-periods {display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}
+.heating-heading {justify-content:space-between}
+.heating-metrics {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 20px}
+.heating-metrics>div {padding:12px 0;border-bottom:1px solid var(--stroke)}
+.heating-metrics span {display:block;color:#bac3d3}
+.heating-metrics strong {font:600 24px ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.heating button,.heating .btn {min-height:40px;padding:8px 12px;border:1px solid #4b586d;border-radius:4px;background:#1b2638;color:var(--text);font-size:14px}
+.heating button[aria-pressed=true] {border-color:var(--green);background:#174536;color:#fff}
+.heating input {background:#0c1320;color:#fff;border:1px solid #64748b;padding:8px;border-radius:4px;max-width:170px;font:14px ui-monospace,monospace}
+.heating button:focus-visible,.heating a:focus-visible,.heating input:focus-visible {outline:2px solid var(--green);outline-offset:3px}
+.heating-chart {height:220px;border-bottom:1px solid #64748b;margin:12px 0;overflow-x:auto}
+.heating-chart svg {width:100%;height:100%;min-width:300px}
+.heating-chart rect {fill:var(--green)}
+.heating-chart rect:focus,.heating-chart rect:hover {fill:#ffbd74;outline:none;stroke:#fff;stroke-width:2}
+.heating-table-wrap {overflow:auto;max-height:360px}
+.heating-table {border-collapse:collapse;width:100%;font-size:14px}
+.heating-table td,.heating-table th {padding:10px 8px;text-align:right;border-bottom:1px solid var(--stroke);white-space:nowrap;font-variant-numeric:tabular-nums}
+.heating-table td {font-family:ui-monospace,monospace}
+.heating-table td:first-child,.heating-table th:first-child {text-align:left}
+.heating-table thead {position:sticky;top:0;background:#121826}
+.heating-table th {font-size:14px;letter-spacing:normal;text-transform:none}
+.heating label {font-size:14px}
+.heating-table th button {border:0;background:none;padding:0}
+.heating #heatingError {color:#ffb7ad;padding:8px 0}
+.heating .subtle {color:#b7c1d2;font-size:14px}
+.heating #heatingEvents {padding-left:20px;max-height:200px;overflow:auto}
+@media(max-width:600px) {.heating {padding:12px}.heating-metrics {grid-template-columns:repeat(2,minmax(0,1fr));gap:0 12px}.heating-periods {gap:6px}.heating-periods button {flex:1 0 auto}.heating-metrics strong {font-size:24px}.heating-row label {display:flex;align-items:center;gap:6px;flex-wrap:wrap}}
