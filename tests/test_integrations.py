@@ -123,6 +123,11 @@ class DashboardTests(unittest.TestCase):
             original = '<style>.original{color:red}</style><div class="top-bar"><span class="top-bar-spacer"></span><a href="settings.html">Settings</a></div>'
             (directory / 'index.html').write_text(original)
             (directory / 'services.json').write_text('{"services":[{"key":"lora"}]}')
+            # Repair old root-only files as well as copying their content.
+            (directory / 'icons').mkdir()
+            for asset in (directory / 'iot.html', directory / 'icons' / 'iot.svg'):
+                asset.write_text('old asset')
+                asset.chmod(0o600)
             backup = dashboard.install_navigation(directory)
             changed = (directory / 'index.html').read_text()
             self.assertEqual(backup.read_text(), original)
@@ -130,6 +135,8 @@ class DashboardTests(unittest.TestCase):
             self.assertIn('.original{color:red}', changed)
             self.assertIn('iot.html', changed)
             self.assertEqual(dashboard.install_navigation(directory), None)
+            self.assertEqual((directory / 'iot.html').stat().st_mode & 0o777, 0o644)
+            self.assertEqual((directory / 'icons' / 'iot.svg').stat().st_mode & 0o777, 0o644)
             self.assertEqual((directory / 'index.html').read_text(), changed)
             self.assertEqual((directory / 'services.json').read_text(), '{"services":[{"key":"lora"}]}')
             self.assertTrue((directory / 'icons' / 'iot.svg').is_file())
