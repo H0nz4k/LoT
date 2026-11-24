@@ -1,5 +1,6 @@
 """Ověřený BOT IPH2 a konfigurovatelný spínač přes lokální Tuya protokol."""
 from datetime import datetime, timezone
+from local_keys import KeyFileError, local_key
 import threading
 import time
 
@@ -114,7 +115,11 @@ class LocalTuya:
                 raise IoTError("V API chybí TinyTuya. Přestavte IoT kontejner.", 503,
                                "dependency_missing") from None
         try:
-            device = factory(module["device_id"], module["ip"], module["local_key"],
+            key = local_key(module)
+        except KeyFileError as error:
+            raise IoTError(str(error), 503, "local_key_unavailable") from None
+        try:
+            device = factory(module["device_id"], module["ip"], key,
                              version=float(module["version"]))
             device.set_socketPersistent(False)
             device.set_socketTimeout(3)

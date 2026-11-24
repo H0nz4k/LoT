@@ -1,5 +1,9 @@
 # HanzHub IoT
 
+**Připravená verze 1.2.1:** [přímá LAN komunikace a soubor lokálního klíče](docs/local-lan-control.md).
+Pro HUB2 se systemd používej verzovaný instalační postup v tomto dokumentu;
+starý Docker instalátor na tomto hostu záměrně odmítne pokračovat.
+
 Samostatná služba pro lokální ovládání a správu chytrých modulů v HanzHubu. Běží na Raspberry Pi jako kontejner `hanzhub_iot`, výchozí port je **4011**. Repo se jmenuje **LoT**, aplikace používá název **IoT moduly**.
 
 Web zachovává styl stávajícího HanzHubu: tmavé pozadí s barevnými přechody, průsvitné karty, logo HanzHub a zelené akce. Ovládání infrapanelu má velkou cílovou teplotu s kruhovým ukazatelem, aktuální teplotu, tlačítka ±, posuvník, zapnutí, dětský zámek a časovač. Funguje na počítači i telefonu.

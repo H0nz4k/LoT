@@ -123,3 +123,82 @@ produkční klíč a neprovádět obnovu napájení.
 
 Další poznatky o LAN komunikaci evidovat v repozitáři
 [H0nz4k/LoT](https://github.com/H0nz4k/LoT), bez tajných údajů.
+
+## Verze 1.2.1 — trvalý lokální klíč a ochrana aktualizací
+
+Dashboard již používá cestu prohlížeč → lokální HTTP brána HUBu →
+`LocalTuya` → panel TCP 6668. Lokální HTTP brána je nutná pro webový
+prohlížeč; nejde o cloudové API výrobce. Klíč se neposílá do prohlížeče.
+Zachovávají se ověření oprávnění, blokace offline/zámku/poruchy a readback.
+
+Konfigurace `HANZHUB_TUYA_KEY_DIR` zapíná soubory `<device_id>.key`.
+Při každém novém spojení ovladač soubor znovu přečte. Při nastaveném
+adresáři nesmí chybějící či neplatný soubor způsobit návrat ke starému
+klíči z databáze: daný panel hlásí `local_key_unavailable`. Ostatní
+ovladače Tapo a Sonoff se nemění. Bez nastavené proměnné je zachováno
+původní chování pro starší instalace.
+
+Na HUB2 je klíč v `/var/lib/hanzhub/iot/keys/bf66247c13125cd7bcs0vj.key`.
+Adresář má režim 700 a soubor 600, vlastník `hanz`. Klíč není součást
+aplikace, aktualizačního archivu, manifestu ani Gitu. Nástroj jej uloží
+atomicky; neplatné zadání nepřepíše předchozí soubor. Neobnovuje se
+automaticky ze starého `devices.json` ani z dřívější databáze.
+
+Po instalaci operátor zadá známý funkční klíč jednou v SSH terminálu:
+
+```bash
+python3 /opt/hanzhub/iot-local-lan/tools/set-local-key.py \
+  --directory /var/lib/hanzhub/iot/keys \
+  --device-id bf66247c13125cd7bcs0vj
+```
+
+Nástroj se na klíč zeptá dvakrát bez zobrazení. Nezadávat klíč do chatu.
+Restart služby není potřeba; běžná cache stavu může trvat osm sekund.
+Ověření přes Dashboard je stále lokální komunikace:
+
+```bash
+curl -sS --max-time 20 \
+  'http://127.0.0.1:4011/api/iot/devices/363e82f24c0e/state?fresh=1'
+```
+
+### Aktualizace na současném HUB2
+
+Nepoužívat celý starý Docker release přes systemd runtime. Instalátor
+`tools/install-hub2-panel-lan.py` aplikuje pouze podporu klíče na skutečný
+živý ovladač, zachová ostatní místní změny, databázi, zařízení, eWeLink,
+Tapo, Dashboard i InfoLCD. Vyžaduje plný SHA zdrojového commitu a čerstvý
+SHA-256 živého `iot_driver.py`; při neshodě skončí před změnou runtime.
+Před nasazením ověřit čistý checkout konkrétní revize a projektová pravidla.
+
+```bash
+git status --short
+git rev-parse HEAD
+sha256sum /opt/hanzhub-iot/iot/iot_driver.py
+# Doplň přesné hodnoty z kontrol výše:
+sudo python3 tools/install-hub2-panel-lan.py \
+  --source-sha ZDROJOVY_COMMIT_40_HEX \
+  --expect-driver-sha ZIVY_SHA256_64_HEX
+```
+
+Instalátor nejprve připraví zálohu a `restore.sh`, potom zapíše verzi,
+zdrojový SHA, hashe runtime a konfigurace do
+`/opt/hanzhub/iot-local-lan/manifest.json`. Restartuje pouze
+`hanzhub-iot`; při selhání instalace obnoví předchozí soubory a službu.
+Rollback zachová samostatně uložený klíč a databázi.
+
+Systemd drop-in `47-local-key-file.conf` nastavuje adresář klíčů a
+`ExecStartPre` kontrolu integrity. Při nečekaném přepsání ovladače,
+modulu, verze nebo drop-inu kontrola při startu chybu zviditelní.
+Neřeší úmyslné odstranění samotné kontroly ani všechny možné budoucí
+instalátory; při aktualizacích ji zachovat a manifest obnovovat pouze
+verzovaným LoT instalátorem. Aktualizace samotného Dashboardu neukládá
+klíče a není vlastníkem tohoto runtime. Starý `install.py` při existenci
+systemd IoT jednotky odmítne spustit paralelní Docker instalaci.
+
+V Docker variantě lze klíče uložit do existujícího trvalého `iot_data`
+volume a v `.env` nastavit `HANZHUB_TUYA_KEY_DIR=/var/lib/hanzhub-iot/keys`.
+Příslušné soubory je třeba nejprve bezpečně vytvořit v tomto volume;
+HUB2 instalátor není určený pro Docker.
+
+Mapování dalších DP a experimentální příkazy jsou samostatný další krok.
+Tato verze nepřidává neověřené povely ani automatické vypínání.
